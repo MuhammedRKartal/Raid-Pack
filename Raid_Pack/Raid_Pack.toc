@@ -1,0 +1,12 @@
+## Interface: 30300
+## Title: Raid Pack
+## Notes: Spammer and Master Looter addons in one pack.
+## Author: HirohitoW
+## Version: 1.0.0
+## SavedVariablesPerCharacter: RTSpammerSave, RTMasterLooterSave
+
+ElvUI_migration.lua
+Master_Looter.lua
+Spammer.lua
+Minimap_Settings.lua
+UI_Core.lua

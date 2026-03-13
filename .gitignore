@@ -1,0 +1,9 @@
+# Ignore everything
+/*
+
+# Keep Raid_Pack folder
+!/Raid_Pack/
+!/Raid_Pack/**
+
+# Keep .gitignore itself
+!.gitignore
