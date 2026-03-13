@@ -9,6 +9,6 @@
 ![Screenshot 4](https://imgur.com/YfqXIvn.png)
 
 ### Master Looter
-![Screenshot 5](https://imgur.com/WqqpUkr.png)
+![Screenshot 5](https://imgur.com/xl3GZ1k.png)
 
 
