@@ -7,12 +7,18 @@ local MAIN_FRAME_HEIGHT = 600
 local TAB_SPACING = 130
 
 local STATUS_OVERLAY_NAME = "RTStatusOverlayFrame"
+local STATUS_OVERLAY_WIDTH = 180
+local STATUS_OVERLAY_HEIGHT = 42
+
+local STATUS_ON_TEXT = "|cff00ff00ON|r"
+local STATUS_OFF_TEXT = "|cffff3b30OFF|r"
+local DEFAULT_POINT = "CENTER"
 
 local mainFrame = nil
+local statusOverlayFrame = nil
 local tabButtons = {}
 local tabFrames = {}
 local activeTabIndex = 1
-local statusOverlayFrame = nil
 
 local TAB_DEFINITIONS = {
     {
@@ -26,20 +32,16 @@ local TAB_DEFINITIONS = {
 }
 
 local function EnsureStatusOverlaySavedVariables()
-    if not RTStatusOverlaySave then
-        RTStatusOverlaySave = {}
-    end
-
     if type(RTStatusOverlaySave) ~= "table" then
         RTStatusOverlaySave = {}
     end
 
     if RTStatusOverlaySave.point == nil then
-        RTStatusOverlaySave.point = "CENTER"
+        RTStatusOverlaySave.point = DEFAULT_POINT
     end
 
     if RTStatusOverlaySave.relativePoint == nil then
-        RTStatusOverlaySave.relativePoint = "CENTER"
+        RTStatusOverlaySave.relativePoint = DEFAULT_POINT
     end
 
     if RTStatusOverlaySave.x == nil then
@@ -74,6 +76,7 @@ end
 
 function IsPlayerLeaderOrAssist()
     local raidRank = GetPlayerRaidRank()
+
     if raidRank == nil then
         return false
     end
@@ -89,18 +92,24 @@ function GetRaidChatType()
     return "RAID"
 end
 
+local function SetFrameShown(frame, shouldShow)
+    if not frame then
+        return
+    end
+
+    if shouldShow then
+        frame:Show()
+    else
+        frame:Hide()
+    end
+end
+
 local function ShowTab(index)
     activeTabIndex = index
 
     for i = 1, #tabFrames do
         local frame = tabFrames[i]
-        if frame then
-            if i == index then
-                frame:Show()
-            else
-                frame:Hide()
-            end
-        end
+        SetFrameShown(frame, i == index)
     end
 
     for i = 1, #tabButtons do
@@ -136,22 +145,22 @@ local function CreateTabButtons(parent)
 end
 
 local function CreateContentFrame(parent)
-    local content = CreateFrame("Frame", nil, parent)
-    content:SetPoint("TOPLEFT", 12, -72)
-    content:SetPoint("BOTTOMRIGHT", -12, 12)
-    return content
+    local contentFrame = CreateFrame("Frame", nil, parent)
+    contentFrame:SetPoint("TOPLEFT", 12, -72)
+    contentFrame:SetPoint("BOTTOMRIGHT", -12, 12)
+    return contentFrame
 end
 
-local function CreateTabFrames(content, onClose)
+local function CreateTabFrames(contentFrame, onClose)
     for i = 1, #TAB_DEFINITIONS do
         local tabDefinition = TAB_DEFINITIONS[i]
         local frame = nil
 
         if type(tabDefinition.creator) == "function" then
-            frame = tabDefinition.creator(content, onClose)
+            frame = tabDefinition.creator(contentFrame, onClose)
         else
-            frame = CreateFrame("Frame", nil, content)
-            frame:SetAllPoints(content)
+            frame = CreateFrame("Frame", nil, contentFrame)
+            frame:SetAllPoints(contentFrame)
         end
 
         frame:Hide()
@@ -175,12 +184,12 @@ local function CreateMainFrameIfNeeded()
     mainFrame = CreateFrame("Frame", MAIN_FRAME_NAME, UIParent, "UIPanelDialogTemplate")
     mainFrame:SetSize(MAIN_FRAME_WIDTH, MAIN_FRAME_HEIGHT)
     mainFrame:SetPoint("CENTER", 0, 0)
-    mainFrame:Hide()
     mainFrame:SetFrameStrata("DIALOG")
     mainFrame:SetMovable(true)
     mainFrame:EnableMouse(true)
     mainFrame:RegisterForDrag("LeftButton")
     mainFrame:SetClampedToScreen(true)
+    mainFrame:Hide()
 
     mainFrame:SetScript("OnDragStart", function(self)
         self:StartMoving()
@@ -192,15 +201,15 @@ local function CreateMainFrameIfNeeded()
 
     tinsert(UISpecialFrames, MAIN_FRAME_NAME)
 
-    local title = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-    title:SetPoint("TOP", 0, -12)
-    title:SetText("Raid Tools")
+    local titleText = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+    titleText:SetPoint("TOP", 0, -12)
+    titleText:SetText("Raid Tools")
 
     CreateTabButtons(mainFrame)
 
-    local content = CreateContentFrame(mainFrame)
+    local contentFrame = CreateContentFrame(mainFrame)
 
-    CreateTabFrames(content, function()
+    CreateTabFrames(contentFrame, function()
         mainFrame:Hide()
     end)
 
@@ -210,12 +219,7 @@ end
 
 function ToggleMainUI()
     CreateMainFrameIfNeeded()
-
-    if mainFrame:IsShown() then
-        mainFrame:Hide()
-    else
-        mainFrame:Show()
-    end
+    SetFrameShown(mainFrame, not mainFrame:IsShown())
 end
 
 local function SaveStatusOverlayPosition()
@@ -227,18 +231,36 @@ local function SaveStatusOverlayPosition()
 
     local point, _, relativePoint, xOfs, yOfs = statusOverlayFrame:GetPoint(1)
 
-    RTStatusOverlaySave.point = point or "CENTER"
-    RTStatusOverlaySave.relativePoint = relativePoint or "CENTER"
+    RTStatusOverlaySave.point = point or DEFAULT_POINT
+    RTStatusOverlaySave.relativePoint = relativePoint or DEFAULT_POINT
     RTStatusOverlaySave.x = xOfs or 0
     RTStatusOverlaySave.y = yOfs or 0
 end
 
-local function GetStatusText(isEnabled, label)
+local function GetModuleStatusLabel(label, isEnabled)
+    local statusText = STATUS_OFF_TEXT
+
     if isEnabled then
-        return "|cffffffff" .. label .. ": |r|cff00ff00ON|r"
+        statusText = STATUS_ON_TEXT
     end
 
-    return "|cffffffff" .. label .. ": |r|cffff3b30OFF|r"
+    return "|cffffffff" .. label .. ": |r" .. statusText
+end
+
+local function IsSpammerEnabled()
+    if not RT_IsSpammerEnabled then
+        return false
+    end
+
+    return RT_IsSpammerEnabled() and true or false
+end
+
+local function IsMasterLooterEnabled()
+    if not RT_IsMasterLooterEnabled then
+        return false
+    end
+
+    return RT_IsMasterLooterEnabled() and true or false
 end
 
 function RefreshStatusOverlay()
@@ -246,24 +268,22 @@ function RefreshStatusOverlay()
         return
     end
 
-    local spammerEnabled = false
-    local masterLooterEnabled = false
-
-    if RT_IsSpammerEnabled then
-        spammerEnabled = RT_IsSpammerEnabled() and true or false
-    end
-
-    if RT_IsMasterLooterEnabled then
-        masterLooterEnabled = RT_IsMasterLooterEnabled() and true or false
-    end
-
     if statusOverlayFrame.spammerText then
-        statusOverlayFrame.spammerText:SetText(GetStatusText(spammerEnabled, "Spammer"))
+        statusOverlayFrame.spammerText:SetText(GetModuleStatusLabel("Spammer", IsSpammerEnabled()))
     end
 
     if statusOverlayFrame.masterLooterText then
-        statusOverlayFrame.masterLooterText:SetText(GetStatusText(masterLooterEnabled, "MLooter"))
+        statusOverlayFrame.masterLooterText:SetText(GetModuleStatusLabel("MLooter", IsMasterLooterEnabled()))
     end
+end
+
+local function CreateStatusText(parent, anchorTarget, offsetY, defaultText)
+    local text = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    text:SetPoint("TOPLEFT", anchorTarget, "TOPLEFT", 0, offsetY)
+    text:SetJustifyH("LEFT")
+    text:SetWidth(STATUS_OVERLAY_WIDTH)
+    text:SetText(defaultText)
+    return text
 end
 
 local function CreateStatusOverlayIfNeeded()
@@ -274,7 +294,7 @@ local function CreateStatusOverlayIfNeeded()
     EnsureStatusOverlaySavedVariables()
 
     statusOverlayFrame = CreateFrame("Button", STATUS_OVERLAY_NAME, UIParent)
-    statusOverlayFrame:SetSize(180, 42)
+    statusOverlayFrame:SetSize(STATUS_OVERLAY_WIDTH, STATUS_OVERLAY_HEIGHT)
     statusOverlayFrame:SetFrameStrata("HIGH")
     statusOverlayFrame:SetMovable(true)
     statusOverlayFrame:EnableMouse(true)
@@ -305,27 +325,22 @@ local function CreateStatusOverlayIfNeeded()
         end
     end)
 
-    statusOverlayFrame.spammerText = statusOverlayFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    statusOverlayFrame.spammerText:SetPoint("TOPLEFT", statusOverlayFrame, "TOPLEFT", 0, 0)
-    statusOverlayFrame.spammerText:SetJustifyH("LEFT")
-    statusOverlayFrame.spammerText:SetWidth(180)
-    statusOverlayFrame.spammerText:SetText("Spammer: |cff00ff00ON|r")
+    statusOverlayFrame.spammerText = CreateStatusText(
+        statusOverlayFrame,
+        statusOverlayFrame,
+        0,
+        GetModuleStatusLabel("Spammer", false)
+    )
 
-    statusOverlayFrame.masterLooterText = statusOverlayFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    statusOverlayFrame.masterLooterText:SetPoint("TOPLEFT", statusOverlayFrame.spammerText, "BOTTOMLEFT", 0, -4)
-    statusOverlayFrame.masterLooterText:SetJustifyH("LEFT")
-    statusOverlayFrame.masterLooterText:SetWidth(180)
-    statusOverlayFrame.masterLooterText:SetText("MLooter: |cffff3b30OFF|r")
+    statusOverlayFrame.masterLooterText = CreateStatusText(
+        statusOverlayFrame,
+        statusOverlayFrame.spammerText,
+        -18,
+        GetModuleStatusLabel("MLooter", false)
+    )
 
-    statusOverlayFrame:SetScript("OnUpdate", function()
-        RefreshStatusOverlay()
-    end)
-
-    if RTStatusOverlaySave.enabled then
-        statusOverlayFrame:Show()
-    else
-        statusOverlayFrame:Hide()
-    end
+    RefreshStatusOverlay()
+    SetFrameShown(statusOverlayFrame, RTStatusOverlaySave.enabled)
 end
 
 function ToggleStatusOverlayVisibility()
@@ -333,17 +348,10 @@ function ToggleStatusOverlayVisibility()
     CreateStatusOverlayIfNeeded()
 
     RTStatusOverlaySave.enabled = not RTStatusOverlaySave.enabled
-
-    if RTStatusOverlaySave.enabled then
-        statusOverlayFrame:Show()
-    else
-        statusOverlayFrame:Hide()
-    end
+    SetFrameShown(statusOverlayFrame, RTStatusOverlaySave.enabled)
 end
 
-local loader = CreateFrame("Frame")
-loader:RegisterEvent("PLAYER_LOGIN")
-loader:SetScript("OnEvent", function()
+local function OnPlayerLogin()
     EnsureStatusOverlaySavedVariables()
     CreateMainFrameIfNeeded()
     CreateStatusOverlayIfNeeded()
@@ -351,4 +359,10 @@ loader:SetScript("OnEvent", function()
     if CreateMinimapButtonIfNeeded then
         CreateMinimapButtonIfNeeded()
     end
+end
+
+local loader = CreateFrame("Frame")
+loader:RegisterEvent("PLAYER_LOGIN")
+loader:SetScript("OnEvent", function()
+    OnPlayerLogin()
 end)

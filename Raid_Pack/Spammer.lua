@@ -147,6 +147,7 @@ end
 
 local function DisableSpammingOnly()
     isSpamming = false
+    RefreshStatusOverlay()
 
     if startBtn then
         startBtn:SetText("Start Spamming")
@@ -155,6 +156,7 @@ end
 
 local function StopSpammingState()
     isSpamming = false
+    RefreshStatusOverlay()
 
     if startBtn then
         startBtn:SetText("Start Spamming")
@@ -1109,6 +1111,7 @@ function CreateSpammerTabContent(parent, onClose)
             end
 
             isSpamming = true
+            RefreshStatusOverlay()
             startBtn:SetText("|cff00ff00Enabled|r")
 
             local now = GetTime()
@@ -1124,6 +1127,7 @@ function CreateSpammerTabContent(parent, onClose)
             end
         else
             isSpamming = false
+            RefreshStatusOverlay()
             startBtn:SetText("Start Spamming")
         end
     end)

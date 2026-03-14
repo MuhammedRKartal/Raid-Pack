@@ -65,6 +65,7 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 
     EnsureSavedVariables()
     isMLActive = RTMasterLooterSave.enabled
+    RefreshStatusOverlay()
 
     self:UnregisterEvent("ADDON_LOADED")
 end)
@@ -556,6 +557,7 @@ function CreateMasterLooterTabContent(parent, onClose)
 
     toggleBtn:SetScript("OnClick", function()
         isMLActive = not isMLActive
+        RefreshStatusOverlay()
         RTMasterLooterSave.enabled = isMLActive
 
         if isMLActive then
