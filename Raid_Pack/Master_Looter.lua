@@ -26,6 +26,10 @@ local defaultSettings = {
     stats = CreateEmptyStats()
 }
 
+function RT_IsMasterLooterEnabled()
+    return isMLActive
+end
+
 local function EnsureSavedVariables()
     if not RTMasterLooterSave then
         RTMasterLooterSave = CopyTable(defaultSettings)

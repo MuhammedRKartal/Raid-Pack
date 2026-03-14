@@ -49,6 +49,10 @@ local CopyCurrentSettings
 local CopyPresetSettings
 local GetSelectedPresetName
 
+function RT_IsSpammerEnabled()
+    return isSpamming
+end
+
 local function CopyIntervals(source)
     local result = {}
 

@@ -6,10 +6,13 @@ local MAIN_FRAME_WIDTH = 880
 local MAIN_FRAME_HEIGHT = 600
 local TAB_SPACING = 130
 
+local STATUS_OVERLAY_NAME = "RTStatusOverlayFrame"
+
 local mainFrame = nil
 local tabButtons = {}
 local tabFrames = {}
 local activeTabIndex = 1
+local statusOverlayFrame = nil
 
 local TAB_DEFINITIONS = {
     {
@@ -21,6 +24,36 @@ local TAB_DEFINITIONS = {
         creator = CreateMasterLooterTabContent
     }
 }
+
+local function EnsureStatusOverlaySavedVariables()
+    if not RTStatusOverlaySave then
+        RTStatusOverlaySave = {}
+    end
+
+    if type(RTStatusOverlaySave) ~= "table" then
+        RTStatusOverlaySave = {}
+    end
+
+    if RTStatusOverlaySave.point == nil then
+        RTStatusOverlaySave.point = "CENTER"
+    end
+
+    if RTStatusOverlaySave.relativePoint == nil then
+        RTStatusOverlaySave.relativePoint = "CENTER"
+    end
+
+    if RTStatusOverlaySave.x == nil then
+        RTStatusOverlaySave.x = 0
+    end
+
+    if RTStatusOverlaySave.y == nil then
+        RTStatusOverlaySave.y = 0
+    end
+
+    if RTStatusOverlaySave.enabled == nil then
+        RTStatusOverlaySave.enabled = true
+    end
+end
 
 local function GetPlayerRaidRank()
     if not IsInRaid() then
@@ -185,9 +218,136 @@ function ToggleMainUI()
     end
 end
 
+local function SaveStatusOverlayPosition()
+    if not statusOverlayFrame then
+        return
+    end
+
+    EnsureStatusOverlaySavedVariables()
+
+    local point, _, relativePoint, xOfs, yOfs = statusOverlayFrame:GetPoint(1)
+
+    RTStatusOverlaySave.point = point or "CENTER"
+    RTStatusOverlaySave.relativePoint = relativePoint or "CENTER"
+    RTStatusOverlaySave.x = xOfs or 0
+    RTStatusOverlaySave.y = yOfs or 0
+end
+
+local function GetStatusText(isEnabled, label)
+    if isEnabled then
+        return "|cffffffff" .. label .. ": |r|cff00ff00ON|r"
+    end
+
+    return "|cffffffff" .. label .. ": |r|cffff3b30OFF|r"
+end
+
+function RefreshStatusOverlay()
+    if not statusOverlayFrame then
+        return
+    end
+
+    local spammerEnabled = false
+    local masterLooterEnabled = false
+
+    if RT_IsSpammerEnabled then
+        spammerEnabled = RT_IsSpammerEnabled() and true or false
+    end
+
+    if RT_IsMasterLooterEnabled then
+        masterLooterEnabled = RT_IsMasterLooterEnabled() and true or false
+    end
+
+    if statusOverlayFrame.spammerText then
+        statusOverlayFrame.spammerText:SetText(GetStatusText(spammerEnabled, "Spammer"))
+    end
+
+    if statusOverlayFrame.masterLooterText then
+        statusOverlayFrame.masterLooterText:SetText(GetStatusText(masterLooterEnabled, "MLooter"))
+    end
+end
+
+local function CreateStatusOverlayIfNeeded()
+    if statusOverlayFrame then
+        return
+    end
+
+    EnsureStatusOverlaySavedVariables()
+
+    statusOverlayFrame = CreateFrame("Button", STATUS_OVERLAY_NAME, UIParent)
+    statusOverlayFrame:SetSize(180, 42)
+    statusOverlayFrame:SetFrameStrata("HIGH")
+    statusOverlayFrame:SetMovable(true)
+    statusOverlayFrame:EnableMouse(true)
+    statusOverlayFrame:RegisterForClicks("RightButtonUp")
+    statusOverlayFrame:RegisterForDrag("LeftButton")
+    statusOverlayFrame:SetClampedToScreen(true)
+
+    statusOverlayFrame:SetPoint(
+        RTStatusOverlaySave.point,
+        UIParent,
+        RTStatusOverlaySave.relativePoint,
+        RTStatusOverlaySave.x,
+        RTStatusOverlaySave.y
+    )
+
+    statusOverlayFrame:SetScript("OnDragStart", function(self)
+        self:StartMoving()
+    end)
+
+    statusOverlayFrame:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        SaveStatusOverlayPosition()
+    end)
+
+    statusOverlayFrame:SetScript("OnClick", function(_, button)
+        if button == "RightButton" then
+            ToggleMainUI()
+        end
+    end)
+
+    statusOverlayFrame.spammerText = statusOverlayFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    statusOverlayFrame.spammerText:SetPoint("TOPLEFT", statusOverlayFrame, "TOPLEFT", 0, 0)
+    statusOverlayFrame.spammerText:SetJustifyH("LEFT")
+    statusOverlayFrame.spammerText:SetWidth(180)
+    statusOverlayFrame.spammerText:SetText("Spammer: |cff00ff00ON|r")
+
+    statusOverlayFrame.masterLooterText = statusOverlayFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    statusOverlayFrame.masterLooterText:SetPoint("TOPLEFT", statusOverlayFrame.spammerText, "BOTTOMLEFT", 0, -4)
+    statusOverlayFrame.masterLooterText:SetJustifyH("LEFT")
+    statusOverlayFrame.masterLooterText:SetWidth(180)
+    statusOverlayFrame.masterLooterText:SetText("MLooter: |cffff3b30OFF|r")
+
+    statusOverlayFrame:SetScript("OnUpdate", function()
+        RefreshStatusOverlay()
+    end)
+
+    if RTStatusOverlaySave.enabled then
+        statusOverlayFrame:Show()
+    else
+        statusOverlayFrame:Hide()
+    end
+end
+
+function ToggleStatusOverlayVisibility()
+    EnsureStatusOverlaySavedVariables()
+    CreateStatusOverlayIfNeeded()
+
+    RTStatusOverlaySave.enabled = not RTStatusOverlaySave.enabled
+
+    if RTStatusOverlaySave.enabled then
+        statusOverlayFrame:Show()
+    else
+        statusOverlayFrame:Hide()
+    end
+end
+
 local loader = CreateFrame("Frame")
 loader:RegisterEvent("PLAYER_LOGIN")
 loader:SetScript("OnEvent", function()
+    EnsureStatusOverlaySavedVariables()
+    CreateMainFrameIfNeeded()
+    CreateStatusOverlayIfNeeded()
+
     if CreateMinimapButtonIfNeeded then
         CreateMinimapButtonIfNeeded()
     end

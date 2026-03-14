@@ -26,9 +26,8 @@ local function OnMinimapButtonClick(self, button)
     end
 
     if button == "RightButton" then
-        local mainFrame = _G[MAIN_FRAME_NAME]
-        if mainFrame and mainFrame:IsShown() then
-            mainFrame:Hide()
+        if ToggleStatusOverlayVisibility then
+            ToggleStatusOverlayVisibility()
         end
     end
 end
@@ -39,9 +38,9 @@ local function OnMinimapButtonEnter(self)
     GameTooltip:AddLine("by HirohitoW", 0.7, 0.7, 0.7)
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine("Left Click:", 0, 1, 0)
-    GameTooltip:AddLine("  Open / Close UI", 1, 1, 1)
+    GameTooltip:AddLine("  Open / Close Addon UI", 1, 1, 1)
     GameTooltip:AddLine("Right Click:", 0, 1, 0)
-    GameTooltip:AddLine("  Close UI", 1, 1, 1)
+    GameTooltip:AddLine("  Toggle Status Overlay", 1, 1, 1)
     GameTooltip:Show()
 end
 

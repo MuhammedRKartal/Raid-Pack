@@ -3,7 +3,7 @@
 ## Notes: Spammer and Master Looter addons in one pack.
 ## Author: HirohitoW
 ## Version: 1.0.0
-## SavedVariablesPerCharacter: RTSpammerSave, RTMasterLooterSave
+## SavedVariablesPerCharacter: RTSpammerSave, RTMasterLooterSave, RTStatusOverlaySave
 
 ElvUI_migration.lua
 Master_Looter.lua
