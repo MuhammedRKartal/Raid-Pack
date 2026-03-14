@@ -166,6 +166,10 @@ local function TryWhisperCollector(playerName, itemLink)
         return
     end
 
+    if not IsPlayerMasterLooter() then
+        return
+    end
+
     if playerName == UnitName("player") then
         return
     end
@@ -205,10 +209,6 @@ end
 
 local function OnLootMsg(msg)
     if not IsInRaid() then
-        return
-    end
-
-    if not IsPlayerMasterLooter() then
         return
     end
 
