@@ -18,10 +18,10 @@ local PRESET_NAME_MAX_LENGTH = 21
 
 local defaultCurrentSettings = {
     intervals = {
-        ["General"] = "20",
-        ["Trade"] = "18",
-        ["World"] = "63",
-        ["YELL"] = "22"
+        ["General"] = "23",
+        ["Trade"] = "17",
+        ["World"] = "61",
+        ["YELL"] = "37"
     },
     enabledChannels = {
         ["General"] = true,
