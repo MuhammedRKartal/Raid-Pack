@@ -1,6 +1,7 @@
 -- Spammer.lua
 
-local addonName, addonTable = ...
+local addonName = ...
+local addonTable = select(2, ...)
 
 local isSpamming = false
 local channelRows = {}
@@ -16,7 +17,6 @@ local DEFAULT_PRESET_MESSAGE = "Need a new UI or nice Weakauras to track everyth
 local PRESET_NAME_MAX_LENGTH = 21
 
 local defaultCurrentSettings = {
-    message = "",
     intervals = {
         ["General"] = "20",
         ["Trade"] = "18",
@@ -32,19 +32,7 @@ local defaultCurrentSettings = {
 }
 
 local defaultEmbeddedPreset = {
-    message = DEFAULT_PRESET_MESSAGE,
-    intervals = {
-        ["General"] = "20",
-        ["Trade"] = "18",
-        ["World"] = "63",
-        ["YELL"] = "22"
-    },
-    enabledChannels = {
-        ["General"] = true,
-        ["Trade"] = true,
-        ["World"] = true,
-        ["YELL"] = false
-    }
+    message = DEFAULT_PRESET_MESSAGE
 }
 
 local channelPool = {
@@ -57,8 +45,71 @@ local channelPool = {
 local selectedPresetName = nil
 local updateFrame = CreateFrame("Frame")
 
-local CopySettings
+local CopyCurrentSettings
+local CopyPresetSettings
 local GetSelectedPresetName
+
+local function CopyIntervals(source)
+    local result = {}
+
+    if source then
+        for key, value in pairs(source) do
+            result[key] = tostring(value)
+        end
+    end
+
+    return result
+end
+
+local function CopyEnabledChannels(source)
+    local result = {}
+
+    if source then
+        for key, value in pairs(source) do
+            result[key] = value and true or false
+        end
+    end
+
+    return result
+end
+
+CopyCurrentSettings = function(source)
+    local result = {
+        intervals = {},
+        enabledChannels = {}
+    }
+
+    if source then
+        result.intervals = CopyIntervals(source.intervals)
+        result.enabledChannels = CopyEnabledChannels(source.enabledChannels)
+    end
+
+    for channelName, intervalValue in pairs(defaultCurrentSettings.intervals) do
+        if result.intervals[channelName] == nil then
+            result.intervals[channelName] = intervalValue
+        end
+    end
+
+    for channelName, enabledValue in pairs(defaultCurrentSettings.enabledChannels) do
+        if result.enabledChannels[channelName] == nil then
+            result.enabledChannels[channelName] = enabledValue
+        end
+    end
+
+    return result
+end
+
+CopyPresetSettings = function(source)
+    local result = {
+        message = ""
+    }
+
+    if source then
+        result.message = source.message or ""
+    end
+
+    return result
+end
 
 local function EnsureSavedVariables()
     if not RTSpammerSave then
@@ -70,20 +121,32 @@ local function EnsureSavedVariables()
     end
 
     if type(RTSpammerSave.current) ~= "table" then
-        RTSpammerSave.current = CopySettings(defaultCurrentSettings)
+        RTSpammerSave.current = CopyCurrentSettings(defaultCurrentSettings)
     else
-        RTSpammerSave.current = CopySettings(RTSpammerSave.current)
+        RTSpammerSave.current = CopyCurrentSettings(RTSpammerSave.current)
     end
 
     if type(RTSpammerSave.presets) ~= "table" then
         RTSpammerSave.presets = {}
     end
 
+    for presetName, presetData in pairs(RTSpammerSave.presets) do
+        RTSpammerSave.presets[presetName] = CopyPresetSettings(presetData)
+    end
+
     if RTSpammerSave.activePresetName ~= nil and type(RTSpammerSave.activePresetName) ~= "string" then
         RTSpammerSave.activePresetName = nil
     end
 
-    RTSpammerSave.presets[DEFAULT_PRESET_NAME] = CopySettings(defaultEmbeddedPreset)
+    RTSpammerSave.presets[DEFAULT_PRESET_NAME] = CopyPresetSettings(defaultEmbeddedPreset)
+end
+
+local function DisableSpammingOnly()
+    isSpamming = false
+
+    if startBtn then
+        startBtn:SetText("Start Spamming")
+    end
 end
 
 local function StopSpammingState()
@@ -113,8 +176,22 @@ local function GetSavedMessageForCurrentSelection()
         end
     end
 
-    if RTSpammerSave.current then
-        return RTSpammerSave.current.message or ""
+    return ""
+end
+
+local function GetMessageToSend()
+    EnsureSavedVariables()
+
+    local presetName = GetSelectedPresetName()
+
+    if presetName and presetName ~= "" and presetName ~= CREATE_NEW_PRESET_LABEL then
+        local presetData = RTSpammerSave.presets[presetName]
+
+        if presetData and (presetData.message or "") ~= "" then
+            return presetData.message or ""
+        end
+
+        return ""
     end
 
     return ""
@@ -212,58 +289,6 @@ end
 local function ShowSavedFeedback()
     SetSaveButtonVisual("Saved", 0, 1, 0)
     saveFeedbackResetAt = GetTime() + 3
-end
-
-local function CopyIntervals(source)
-    local result = {}
-
-    if source then
-        for key, value in pairs(source) do
-            result[key] = tostring(value)
-        end
-    end
-
-    return result
-end
-
-local function CopyEnabledChannels(source)
-    local result = {}
-
-    if source then
-        for key, value in pairs(source) do
-            result[key] = value and true or false
-        end
-    end
-
-    return result
-end
-
-CopySettings = function(source)
-    local result = {
-        message = "",
-        intervals = {},
-        enabledChannels = {}
-    }
-
-    if source then
-        result.message = source.message or ""
-        result.intervals = CopyIntervals(source.intervals)
-        result.enabledChannels = CopyEnabledChannels(source.enabledChannels)
-    end
-
-    for channelName, intervalValue in pairs(defaultCurrentSettings.intervals) do
-        if result.intervals[channelName] == nil then
-            result.intervals[channelName] = intervalValue
-        end
-    end
-
-    for channelName, enabledValue in pairs(defaultCurrentSettings.enabledChannels) do
-        if result.enabledChannels[channelName] == nil then
-            result.enabledChannels[channelName] = enabledValue
-        end
-    end
-
-    return result
 end
 
 local loader = CreateFrame("Frame")
@@ -372,6 +397,14 @@ local function GetSortedPresetNames()
     end
 
     table.sort(presetNames, function(leftValue, rightValue)
+        if leftValue == DEFAULT_PRESET_NAME then
+            return true
+        end
+
+        if rightValue == DEFAULT_PRESET_NAME then
+            return false
+        end
+
         return string.lower(leftValue) < string.lower(rightValue)
     end)
 
@@ -460,13 +493,9 @@ local function SaveCurrentSettings()
     SaveCurrentSettingsFromUI()
 end
 
-local function ApplySettingsToUI(settingsData)
+local function ApplyCurrentSettingsToUI(settingsData)
     if not settingsData then
         return
-    end
-
-    if msgEditBox then
-        msgEditBox:SetText(settingsData.message or "")
     end
 
     for _, row in ipairs(channelRows) do
@@ -485,13 +514,25 @@ local function ApplySettingsToUI(settingsData)
         row.timer:SetText(intervalValue)
         row.check:SetChecked(enabledValue)
     end
+end
+
+local function ApplyPresetMessageToUI(presetData)
+    if not msgEditBox then
+        return
+    end
+
+    if presetData then
+        msgEditBox:SetText(presetData.message or "")
+    else
+        msgEditBox:SetText("")
+    end
 
     UpdateMessageDirtyState()
 end
 
 local function LoadCurrentSettingsToUI()
     local currentSettings = GetCurrentSettings()
-    ApplySettingsToUI(currentSettings)
+    ApplyCurrentSettingsToUI(currentSettings)
 end
 
 local function StopRenameMode()
@@ -535,18 +576,15 @@ local function SaveActivePreset()
         return
     end
 
-    local currentSettings = GetCurrentSettings()
     local currentMessage = ""
 
     if msgEditBox then
         currentMessage = msgEditBox:GetText() or ""
     end
 
-    SaveCurrentSettingsFromUI()
-    currentSettings.message = currentMessage
-
-    RTSpammerSave.current = CopySettings(currentSettings)
-    RTSpammerSave.presets[presetName] = CopySettings(currentSettings)
+    RTSpammerSave.presets[presetName] = CopyPresetSettings({
+        message = currentMessage
+    })
     RTSpammerSave.activePresetName = presetName
 
     UpdateMessageDirtyState()
@@ -554,16 +592,19 @@ end
 
 local function CreateNewPreset()
     EnsureSavedVariables()
-    StopSpammingState()
+    DisableSpammingOnly()
 
     local presetName = GetNextNewPresetName()
-    RTSpammerSave.presets[presetName] = CopySettings(defaultCurrentSettings)
-    RTSpammerSave.current = CopySettings(RTSpammerSave.presets[presetName])
+    RTSpammerSave.presets[presetName] = CopyPresetSettings({
+        message = ""
+    })
     RTSpammerSave.activePresetName = presetName
 
     SetSelectedPresetName(presetName)
     StopRenameMode()
-    ApplySettingsToUI(RTSpammerSave.current)
+
+    LoadCurrentSettingsToUI()
+    ApplyPresetMessageToUI(RTSpammerSave.presets[presetName])
 end
 
 local function LoadPreset(presetName)
@@ -581,15 +622,15 @@ local function LoadPreset(presetName)
     if not RTSpammerSave.presets[presetName] then
         return
     end
+    DisableSpammingOnly()
 
-    StopSpammingState()
-
-    RTSpammerSave.current = CopySettings(RTSpammerSave.presets[presetName])
     RTSpammerSave.activePresetName = presetName
 
     SetSelectedPresetName(presetName)
     StopRenameMode()
-    ApplySettingsToUI(RTSpammerSave.current)
+
+    LoadCurrentSettingsToUI()
+    ApplyPresetMessageToUI(RTSpammerSave.presets[presetName])
 end
 
 local function DeletePreset(presetName)
@@ -611,7 +652,7 @@ local function DeletePreset(presetName)
         return
     end
 
-    StopSpammingState()
+    DisableSpammingOnly()
 
     RTSpammerSave.presets[presetName] = nil
 
@@ -622,7 +663,8 @@ local function DeletePreset(presetName)
     SetSelectedPresetName(nil)
     StopRenameMode()
 
-    ApplySettingsToUI(defaultCurrentSettings)
+    LoadCurrentSettingsToUI()
+    ApplyPresetMessageToUI(nil)
 end
 
 local function IsRenameBlocked(presetName)
@@ -695,7 +737,7 @@ local function RenameSelectedPreset(newName)
 
     finalName = GetUniquePresetName(finalName)
 
-    RTSpammerSave.presets[finalName] = CopySettings(RTSpammerSave.presets[oldName])
+    RTSpammerSave.presets[finalName] = CopyPresetSettings(RTSpammerSave.presets[oldName])
     RTSpammerSave.presets[oldName] = nil
     RTSpammerSave.activePresetName = finalName
 
@@ -895,7 +937,6 @@ function CreateSpammerTabContent(parent, onClose)
             charCountText:SetText(string.format("Characters: %d/255", textLength))
         end
 
-        SaveCurrentSettingsFromUI()
         UpdateMessageDirtyState()
     end)
 
@@ -971,10 +1012,7 @@ function CreateSpammerTabContent(parent, onClose)
                     row.cdText:SetText("|cffffcc00SENDING|r")
                 end
 
-                local textValue = ""
-                if msgEditBox then
-                    textValue = msgEditBox:GetText() or ""
-                end
+                local textValue = GetMessageToSend()
 
                 local intervalValue = tonumber(row.timer:GetText()) or 30
                 row.nextSend = now + intervalValue
@@ -1004,12 +1042,14 @@ function CreateSpammerTabContent(parent, onClose)
     f:SetScript("OnShow", function()
         EnsureSavedVariables()
 
+        LoadCurrentSettingsToUI()
+
         if RTSpammerSave.activePresetName and RTSpammerSave.activePresetName ~= "" and RTSpammerSave.presets[RTSpammerSave.activePresetName] then
             SetSelectedPresetName(RTSpammerSave.activePresetName)
-            ApplySettingsToUI(RTSpammerSave.presets[RTSpammerSave.activePresetName])
+            ApplyPresetMessageToUI(RTSpammerSave.presets[RTSpammerSave.activePresetName])
         else
             SetSelectedPresetName(nil)
-            LoadCurrentSettingsToUI()
+            ApplyPresetMessageToUI(nil)
         end
 
         StopRenameMode()
@@ -1058,9 +1098,7 @@ function CreateSpammerTabContent(parent, onClose)
         if not isSpamming then
             local textValue = ""
 
-            if msgEditBox then
-                textValue = msgEditBox:GetText() or ""
-            end
+            local textValue = GetMessageToSend()
 
             if textValue == "" then
                 return
@@ -1093,18 +1131,18 @@ function CreateSpammerTabContent(parent, onClose)
     closeBtn:SetScript("OnClick", onClose)
 
     if TryGetElvUISkinModule then
-        local _, s = TryGetElvUISkinModule()
+        local eValue, sValue = TryGetElvUISkinModule()
 
-        if s then
-            s:HandleButton(presetDropdownButton)
-            s:HandleButton(renamePresetBtn)
-            s:HandleButton(deletePresetBtn)
-            s:HandleButton(savePresetBtn)
-            s:HandleButton(startBtn)
-            s:HandleButton(closeBtn)
+        if eValue and sValue then
+            sValue:HandleButton(presetDropdownButton)
+            sValue:HandleButton(renamePresetBtn)
+            sValue:HandleButton(deletePresetBtn)
+            sValue:HandleButton(savePresetBtn)
+            sValue:HandleButton(startBtn)
+            sValue:HandleButton(closeBtn)
 
             for _, row in ipairs(channelRows) do
-                s:HandleCheckBox(row.check)
+                sValue:HandleCheckBox(row.check)
             end
         end
     end
