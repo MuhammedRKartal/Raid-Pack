@@ -20,15 +20,13 @@ local defaultCurrentSettings = {
     intervals = {
         ["General"] = "20",
         ["Trade"] = "18",
-        ["LFG"] = "63",
         ["World"] = "63",
         ["YELL"] = "22"
     },
     enabledChannels = {
-        ["General"] = false,
-        ["Trade"] = false,
-        ["LFG"] = false,
-        ["World"] = false,
+        ["General"] = true,
+        ["Trade"] = true,
+        ["World"] = true,
         ["YELL"] = false
     }
 }
@@ -38,21 +36,83 @@ local defaultEmbeddedPreset = {
     intervals = {
         ["General"] = "20",
         ["Trade"] = "18",
-        ["LFG"] = "63",
         ["World"] = "63",
         ["YELL"] = "22"
     },
     enabledChannels = {
-        ["General"] = false,
-        ["Trade"] = false,
-        ["LFG"] = false,
-        ["World"] = false,
+        ["General"] = true,
+        ["Trade"] = true,
+        ["World"] = true,
         ["YELL"] = false
     }
 }
 
+local channelPool = {
+    { name = "General", chatType = "CHANNEL" },
+    { name = "Trade", chatType = "CHANNEL" },
+    { name = "World", chatType = "CHANNEL" },
+    { name = "YELL", chatType = "YELL" },
+}
+
 local selectedPresetName = nil
 local updateFrame = CreateFrame("Frame")
+
+local function CapitalizeWords(text)
+    local result = tostring(text or "")
+    result = string.lower(result)
+    result = string.gsub(result, "(%a)([%w']*)", function(firstChar, restChars)
+        return string.upper(firstChar) .. restChars
+    end)
+    return result
+end
+
+local function NormalizeChannelName(channelName)
+    local result = string.lower(channelName or "")
+    result = string.gsub(result, "%s+", "")
+    return result
+end
+
+local function GetFixedChannelInfo(logicalChannelName)
+    if logicalChannelName == "General" then
+        local channelId, channelName = GetChannelName(1)
+        if channelId and channelId > 0 then
+            return channelId, channelName
+        end
+        return nil, nil
+    end
+
+    if logicalChannelName == "Trade" then
+        local channelId, channelName = GetChannelName(2)
+        if channelId and channelId > 0 then
+            return channelId, channelName
+        end
+        return nil, nil
+    end
+
+    if logicalChannelName == "World" then
+        local candidateIds = { 4, 5, 6 }
+        local i = 1
+
+        while i <= #candidateIds do
+            local candidateId = candidateIds[i]
+            local channelId, channelName = GetChannelName(candidateId)
+
+            if channelId and channelId > 0 and channelName then
+                local normalizedChannelName = NormalizeChannelName(channelName)
+
+                if string.find(normalizedChannelName, "global", 1, true) or string.find(normalizedChannelName, "world", 1, true) then
+                    return channelId, channelName
+                end
+            end
+
+            i = i + 1
+        end
+
+        return nil, nil
+    end
+
+    return nil, nil
+end
 
 local function SetSaveButtonVisual(textValue, redValue, greenValue, blueValue)
     if not savePresetBtn then
@@ -326,14 +386,10 @@ local function GetNextNewPresetName()
     end
 end
 
-local function SaveCurrentSettings()
+local function SaveCurrentSettingsFromUI()
     EnsureSavedVariables()
 
     local currentSettings = GetCurrentSettings()
-
-    if msgEditBox then
-        currentSettings.message = msgEditBox:GetText() or ""
-    end
 
     currentSettings.intervals = {}
     currentSettings.enabledChannels = {}
@@ -342,6 +398,10 @@ local function SaveCurrentSettings()
         currentSettings.intervals[row.config.name] = row.timer:GetText() or ""
         currentSettings.enabledChannels[row.config.name] = row.check:GetChecked() and true or false
     end
+end
+
+local function SaveCurrentSettings()
+    SaveCurrentSettingsFromUI()
 end
 
 local function ApplySettingsToUI(settingsData)
@@ -398,7 +458,6 @@ end
 
 local function SaveActivePreset()
     EnsureSavedVariables()
-    SaveCurrentSettings()
 
     local presetName = GetSelectedPresetName()
 
@@ -418,7 +477,15 @@ local function SaveActivePreset()
         return
     end
 
-    RTSpammerSave.presets[presetName] = CopySettings(RTSpammerSave.current)
+    local currentSettings = GetCurrentSettings()
+
+    if msgEditBox then
+        currentSettings.message = msgEditBox:GetText() or ""
+    end
+
+    SaveCurrentSettings()
+
+    RTSpammerSave.presets[presetName] = CopySettings(currentSettings)
     RTSpammerSave.activePresetName = presetName
 end
 
@@ -764,14 +831,6 @@ function CreateSpammerTabContent(parent, onClose)
     charCountText:SetPoint("TOPRIGHT", msgBG, "BOTTOMRIGHT", 0, -5)
     charCountText:SetText("Characters: 0/255")
 
-    local channelPool = {
-        { name = "General", chatType = "CHANNEL", channelID = 1 },
-        { name = "Trade", chatType = "CHANNEL", channelID = 2 },
-        { name = "LFG", chatType = "CHANNEL", channelID = 5 },
-        { name = "World", chatType = "CHANNEL", channelID = 6 },
-        { name = "YELL", chatType = "YELL", channelID = nil },
-    }
-
     for i, config in ipairs(channelPool) do
         local row = CreateFrame("Frame", nil, f)
         row:SetSize(600, 30)
@@ -780,7 +839,9 @@ function CreateSpammerTabContent(parent, onClose)
         row.check = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
         row.check:SetPoint("LEFT", 0, 0)
         row.check:SetSize(24, 24)
-        row.check:SetScript("OnClick", nil)
+        row.check:SetScript("OnClick", function()
+            SaveCurrentSettingsFromUI()
+        end)
 
         row.text = row.check:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         row.text:SetPoint("LEFT", row.check, "RIGHT", 5, 0)
@@ -799,7 +860,9 @@ function CreateSpammerTabContent(parent, onClose)
         row.timer:SetNumeric(true)
         row.timer:SetAutoFocus(false)
         row.timer:SetFontObject(ChatFontNormal)
-        row.timer:SetScript("OnTextChanged", nil)
+        row.timer:SetScript("OnTextChanged", function(self)
+            SaveCurrentSettingsFromUI()
+        end)
 
         row.cdText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         row.cdText:SetPoint("LEFT", tBG, "RIGHT", 15, 0)
@@ -846,7 +909,11 @@ function CreateSpammerTabContent(parent, onClose)
 
                 if textValue ~= "" then
                     if row.config.chatType == "CHANNEL" then
-                        local channelId = GetChannelName(row.config.channelID)
+                        local channelId = nil
+                        local channelName  = nil
+
+                        channelId, channelName = GetFixedChannelInfo(row.config.name)
+
                         if channelId and channelId > 0 then
                             SendChatMessage(textValue, "CHANNEL", nil, channelId)
                         end
@@ -881,11 +948,16 @@ function CreateSpammerTabContent(parent, onClose)
 
             if row.config.chatType == "YELL" then
                 isAvailable = true
+                displayName = CapitalizeWords(row.config.name)
             else
-                local channelIndex, channelName = GetChannelName(row.config.channelID)
+                local channelIndex = nil
+                local channelName = nil
+
+                channelIndex, channelName = GetFixedChannelInfo(row.config.name)
+
                 if channelIndex and channelIndex > 0 then
                     isAvailable = true
-                    displayName = "/" .. channelIndex .. " (" .. channelName .. ")"
+                    displayName = CapitalizeWords(channelName) .. " (" .. tostring(channelIndex) .. ")"
                 end
             end
 
@@ -925,9 +997,12 @@ function CreateSpammerTabContent(parent, onClose)
             local now = GetTime()
 
             for _, row in ipairs(channelRows) do
-                if row.nextSend <= now then
-                    local intervalValue = tonumber(row.timer:GetText()) or 30
+                local intervalValue = tonumber(row.timer:GetText()) or 30
+
+                if row.config.name == "General" or row.config.name == "Trade" then
                     row.nextSend = now + intervalValue
+                else
+                    row.nextSend = now
                 end
             end
         else
