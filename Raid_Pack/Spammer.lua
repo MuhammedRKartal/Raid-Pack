@@ -1102,8 +1102,6 @@ function CreateSpammerTabContent(parent, onClose)
 
     startBtn:SetScript("OnClick", function()
         if not isSpamming then
-            local textValue = ""
-
             local textValue = GetMessageToSend()
 
             if textValue == "" then
@@ -1119,10 +1117,8 @@ function CreateSpammerTabContent(parent, onClose)
             for _, row in ipairs(channelRows) do
                 local intervalValue = tonumber(row.timer:GetText()) or 30
 
-                if row.config.name == "General" or row.config.name == "Trade" then
+                if not row.nextSend or row.nextSend <= 0 then
                     row.nextSend = now + intervalValue
-                else
-                    row.nextSend = now
                 end
             end
         else
@@ -1131,6 +1127,7 @@ function CreateSpammerTabContent(parent, onClose)
             startBtn:SetText("Start Spamming")
         end
     end)
+
 
     local closeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     closeBtn:SetSize(100, 28)
