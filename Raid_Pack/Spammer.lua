@@ -816,18 +816,93 @@ local function CreatePresetDropdown(parentFrame)
     end)
 end
 
-local function HookChatLinks()
-    local original = ChatEdit_InsertLink
+local isLinkHooksInstalled = false
+local originalSetItemRef = nil
+local originalChatEdit_InsertLink = nil
+
+local isLinkHooksInstalled = false
+local originalChatEdit_InsertLink = nil
+local originalChatEdit_GetActiveWindow = nil
+
+local function IsMessageBoxActive()
+    if not msgEditBox then
+        return false
+    end
+
+    if not msgEditBox:IsShown() then
+        return false
+    end
+
+    if msgEditBox:HasFocus() then
+        return true
+    end
+
+    return false
+end
+
+local function InsertLinkIntoMessageBox(link)
+    if not IsMessageBoxActive() then
+        return false
+    end
+
+    if not link or link == "" then
+        return false
+    end
+
+    local currentText = msgEditBox:GetText() or ""
+    local insertText = link
+
+    if string.len(currentText) + string.len(insertText) > 255 then
+        return false
+    end
+
+    msgEditBox:Insert(insertText)
+    msgEditBox:SetFocus()
+
+    if charCountText then
+        charCountText:SetText(string.format("Characters: %d/255", string.len(msgEditBox:GetText() or "")))
+    end
+
+    UpdateMessageDirtyState()
+
+    return true
+end
+
+local function HookLinkInsertion()
+    if isLinkHooksInstalled then
+        return
+    end
+
+    isLinkHooksInstalled = true
+
+    originalChatEdit_GetActiveWindow = ChatEdit_GetActiveWindow
+    ChatEdit_GetActiveWindow = function(...)
+        if IsMessageBoxActive() then
+            return msgEditBox
+        end
+
+        if originalChatEdit_GetActiveWindow then
+            return originalChatEdit_GetActiveWindow(...)
+        end
+
+        return nil
+    end
+
+    originalChatEdit_InsertLink = ChatEdit_InsertLink
     ChatEdit_InsertLink = function(link)
-        if msgEditBox and msgEditBox:HasFocus() then
-            msgEditBox:Insert(link)
+        if InsertLinkIntoMessageBox(link) then
             return true
         end
 
-        return original(link)
+        if originalChatEdit_InsertLink then
+            return originalChatEdit_InsertLink(link)
+        end
+
+        return false
     end
 end
-HookChatLinks()
+
+HookLinkInsertion()
 
 local function ApplyPixelStyle(frame, width, height)
     frame:SetSize(width, height)
@@ -944,6 +1019,18 @@ function CreateSpammerTabContent(parent, onClose)
         end
 
         UpdateMessageDirtyState()
+    end)
+
+    msgEditBox:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+    end)
+
+    msgEditBox:SetScript("OnMouseDown", function(self)
+        self:SetFocus()
+    end)
+
+    msgEditBox:SetScript("OnEditFocusGained", function(self)
+        self:SetFocus()
     end)
 
     charCountText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
