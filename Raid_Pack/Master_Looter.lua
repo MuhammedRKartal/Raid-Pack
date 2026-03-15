@@ -5,6 +5,9 @@ local mlFrame = CreateFrame("Frame")
 local RT_RefreshLogUI = nil
 local RT_RefreshStatsUI = nil
 
+local RTTooltip = CreateFrame("GameTooltip", "RTMasterLooterScanTooltip", nil, "GameTooltipTemplate")
+RTTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+
 local function CreateEmptyStats()
     return {
         epic = 0,
@@ -65,7 +68,10 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 
     EnsureSavedVariables()
     isMLActive = RTMasterLooterSave.enabled
-    RefreshStatusOverlay()
+
+    if RefreshStatusOverlay then
+        RefreshStatusOverlay()
+    end
 
     self:UnregisterEvent("ADDON_LOADED")
 end)
@@ -92,11 +98,33 @@ local function BuildMasterLootCandidateMap()
     return candidates
 end
 
+local function IsItemBOE(itemLink)
+    if not itemLink or itemLink == "" then
+        return false
+    end
+
+    RTTooltip:ClearLines()
+    RTTooltip:SetHyperlink(itemLink)
+
+    for index = 2, 8 do
+        local line = _G["RTMasterLooterScanTooltipTextLeft" .. index]
+        if line then
+            local text = line:GetText()
+            if text and text:find("Binds when equipped") then
+                RTTooltip:Hide()
+                return true
+            end
+        end
+    end
+
+    RTTooltip:Hide()
+    return false
+end
+
 local function GetTargetCollectorName(itemLink, quality)
     local targetName = RTMasterLooterSave.lootCollector
-    local _, _, _, _, _, _, _, _, _, _, _, _, _, bindType = GetItemInfo(itemLink)
 
-    if bindType == 2 then
+    if IsItemBOE(itemLink) then
         targetName = RTMasterLooterSave.boeCollector
     elseif quality == 5 then
         targetName = RTMasterLooterSave.shardsCollector
@@ -262,6 +290,61 @@ mlFrame:SetScript("OnEvent", function(self, event, ...)
         OnLootMsg(...)
     end
 end)
+
+SLASH_RTMLTEST1 = "/rtmltest"
+SlashCmdList["RTMLTEST"] = function(msg)
+    msg = msg and strtrim(msg) or ""
+
+    if msg == "" then
+        print("Usage: /rtmltest [itemLink]")
+        return
+    end
+
+    local _, itemLink, quality = GetItemInfo(msg)
+    local minQuality = tonumber(RTMasterLooterSave.minQuality) or 0
+
+    local qualityNames = {
+        [0] = "Poor",
+        [1] = "Common",
+        [2] = "Uncommon",
+        [3] = "Rare",
+        [4] = "Epic",
+        [5] = "Legendary"
+    }
+
+    if not quality then
+        print("Item:", msg)
+        print("Quality: nil")
+        print("Bind: unknown")
+        print("Threshold:", qualityNames[minQuality] or tostring(minQuality))
+        print("Target: unknown")
+        return
+    end
+
+    local realItemLink = itemLink or msg
+    local isBOE = IsItemBOE(realItemLink)
+    local bindType = isBOE and "BOE" or "BOP"
+    local passesThreshold = quality >= minQuality
+
+    local target = "IGNORED"
+
+    if passesThreshold then
+        if isBOE then
+            target = RTMasterLooterSave.boeCollector
+        elseif quality == 5 then
+            target = RTMasterLooterSave.shardsCollector
+        else
+            target = RTMasterLooterSave.lootCollector
+        end
+    end
+
+    print("Item:", realItemLink)
+    print("Quality:", qualityNames[quality] or tostring(quality))
+    print("Bind:", bindType)
+    print("Threshold:", qualityNames[minQuality] or tostring(minQuality))
+    print("Passes Threshold:", passesThreshold and "YES" or "NO")
+    print("Target:", target)
+end
 
 local function ApplyPixelStyle(frame, width, height)
     frame:SetSize(width, height)
@@ -557,8 +640,11 @@ function CreateMasterLooterTabContent(parent, onClose)
 
     toggleBtn:SetScript("OnClick", function()
         isMLActive = not isMLActive
-        RefreshStatusOverlay()
         RTMasterLooterSave.enabled = isMLActive
+
+        if RefreshStatusOverlay then
+            RefreshStatusOverlay()
+        end
 
         if isMLActive then
             toggleBtn:SetText("|cff00ff00Enabled|r")
