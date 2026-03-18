@@ -1,44 +1,19 @@
 -- Roll_Manager.lua
+
 local addonName, addonTable = ...
 
+local _G = _G
+local unpack = unpack
+local pcall = pcall
+
 local rollFrame = CreateFrame("Frame")
-local RT_RefreshRollUI = nil
-local RT_RefreshRollButtons = nil
+local loader = CreateFrame("Frame")
 
-local isRecordingRolls = false
-local canAcceptRolls = false
-
-local currentRollType = nil
-local currentItemLink = nil
-local currentItemName = nil
-local currentItemTexture = nil
-
-local isCountdownActive = false
-local countdownDuration = 20
-local countdownStartTime = 0
-local countdownLastAnnounced = nil
-
-local countdownBgRef = nil
-local countdownTextRef = nil
-
-local rollEntries = {}
-local currentWinnerNames = {}
-local currentWinnerCount = 1
-local currentSessionAnnounced = false
-
-local itemEditBoxRef = nil
-local winnerHistoryTextRef = nil
-local rollHistoryViewIndex = 0
+local RefreshRollUI = nil
+local RefreshActionButtons = nil
 
 local originalChatEdit_InsertLink = ChatEdit_InsertLink
 local isInsertLinkHookInstalled = false
-
-local rollContentFrameRef = nil
-
-local msChangesEditBoxRef = nil
-local msChangesToggleButtonRef = nil
-local msChangesAnnounceButtonRef = nil
-local isEditingMSChanges = false
 
 local RAID_MARK_ORDER = {
     1, -- Star
@@ -51,6 +26,36 @@ local RAID_MARK_ORDER = {
     8  -- Skull
 }
 
+local UI_CONSTANTS = {
+    LEFT_MARGIN = 20,
+    RIGHT_MARGIN = -20,
+    TOP_MARGIN = -20,
+    BUTTON_HEIGHT = 28,
+    SMALL_BUTTON_WIDTH = 32,
+    STANDARD_BUTTON_WIDTH = 120,
+    LARGE_BUTTON_WIDTH = 140,
+    CLOSE_BUTTON_WIDTH = 100,
+    CLEAR_WINNERS_BUTTON_WIDTH = 170,
+    CLEAR_ROLLS_BUTTON_WIDTH = 150,
+    PANEL_PADDING = 8,
+    INPUT_HEIGHT = 28,
+    ITEM_ICON_SIZE = 36,
+    ITEM_INPUT_WIDTH = 300,
+    COUNTDOWN_INPUT_WIDTH = 70,
+    WINNER_LABEL_WIDTH = 300,
+    ROLL_HEADER_WIDTH = 210,
+    MS_CHANGES_HEIGHT = 105,
+    HISTORY_NAV_BUTTON_SIZE = 28,
+    TOP_SECTION_Y = -48,
+    ACTIONS_Y = -96,
+    COUNTDOWN_Y = -138,
+    WINNERS_Y = -170,
+    LIST_LABEL_Y = -204,
+    CONTENT_TOP_Y = -230,
+    FOOTER_Y = 12,
+    RIGHT_COLUMN_X = 452
+}
+
 local defaultSettings = {
     countdownDuration = 20,
     useRaidWarning = true,
@@ -59,13 +64,116 @@ local defaultSettings = {
     msChangesText = ""
 }
 
+local rollState = {
+    isRecordingRolls = false,
+    canAcceptRolls = false,
+    currentRollType = nil,
+    currentItemLink = nil,
+    currentItemName = nil,
+    currentItemTexture = nil,
+    isCountdownActive = false,
+    countdownDuration = 20,
+    countdownStartTime = 0,
+    countdownLastAnnounced = nil,
+    currentWinnerCount = 1,
+    currentSessionAnnounced = false,
+    rollHistoryViewIndex = 0,
+    isEditingMSChanges = false,
+    rollEntries = {},
+    currentWinnerNames = {}
+}
+
+local uiRefs = {
+    rollContentFrame = nil,
+
+    itemButton = nil,
+    itemIcon = nil,
+    itemEditBox = nil,
+    itemBg = nil,
+
+    winnerCountButton = nil,
+    winnerCountEditBox = nil,
+    winnerCountBg = nil,
+
+    msButton = nil,
+    osButton = nil,
+    finishEarlyButton = nil,
+    announceWinnersButton = nil,
+
+    countdownBg = nil,
+    countdownEditBox = nil,
+    countdownText = nil,
+
+    winnerLabel = nil,
+    logLabel = nil,
+    rollHeaderLinkButton = nil,
+    rollHeaderLinkText = nil,
+
+    msChangesBg = nil,
+    msChangesEditBox = nil,
+    msChangesToggleButton = nil,
+    msChangesAnnounceButton = nil,
+    msChangesScrollFrame = nil,
+    msChangesScrollChild = nil,
+
+    logBg = nil,
+    historyBg = nil,
+
+    leftHistoryButton = nil,
+    rightHistoryButton = nil,
+
+    rollScrollFrame = nil,
+    rollScrollChild = nil,
+    rollText = nil,
+
+    rollRowButtons = {},
+    rollRowTexts = {},
+    rollRowStrikeLines = {},
+
+    historyScrollFrame = nil,
+    historyScrollChild = nil,
+    historyText = nil,
+
+    closeButton = nil,
+    clearWinnersSavedButton = nil,
+    clearRollsSavedButton = nil
+}
+
+local function TryGetElvUISkinModule()
+    if not _G.ElvUI then
+        return nil, nil
+    end
+
+    local okElvUI, e = pcall(unpack, _G.ElvUI)
+    if not okElvUI or not e or not e.GetModule then
+        return nil, nil
+    end
+
+    local okSkin, skinModule = pcall(e.GetModule, e, "Skins")
+    if not okSkin then
+        return e, nil
+    end
+
+    return e, skinModule
+end
+
+local function HandleButtonSkin(skinModule, button)
+    if skinModule and button and skinModule.HandleButton then
+        skinModule:HandleButton(button)
+    end
+end
+
+local function CopyDefaultSettings()
+    return CopyTable(defaultSettings)
+end
+
 function RT_IsRollManagerEnabled()
     return true
 end
 
 local function EnsureSavedVariables()
     if type(RTRollManagerSave) ~= "table" then
-        RTRollManagerSave = CopyTable(defaultSettings)
+        RTRollManagerSave = CopyDefaultSettings()
     end
 
     if RTRollManagerSave.countdownDuration == nil then
@@ -89,22 +197,35 @@ local function EnsureSavedVariables()
     end
 end
 
-local loader = CreateFrame("Frame")
-loader:RegisterEvent("ADDON_LOADED")
-loader:SetScript("OnEvent", function(self, event, arg1)
-    if arg1 ~= addonName then
-        return
+local function GetSafeStringHeight(fontString, fallbackValue)
+    local resolvedFallbackValue = fallbackValue or 20
+
+    if not fontString or not fontString.GetStringHeight then
+        return resolvedFallbackValue
     end
 
-    EnsureSavedVariables()
-    countdownDuration = tonumber(RTRollManagerSave.countdownDuration) or 20
-
-    if RefreshStatusOverlay then
-        RefreshStatusOverlay()
+    local heightValue = fontString:GetStringHeight()
+    if not heightValue or heightValue <= 0 then
+        return resolvedFallbackValue
     end
 
-    self:UnregisterEvent("ADDON_LOADED")
-end)
+    return heightValue
+end
+
+local function GetSafeEditBoxTextHeight(editBox, fallbackValue)
+    local resolvedFallbackValue = fallbackValue or 20
+
+    if not editBox or not editBox.GetTextHeight then
+        return resolvedFallbackValue
+    end
+
+    local heightValue = editBox:GetTextHeight()
+    if not heightValue or heightValue <= 0 then
+        return resolvedFallbackValue
+    end
+
+    return heightValue
+end
 
 local function GetAnnouncementChannel()
     EnsureSavedVariables()
@@ -130,6 +251,68 @@ local function Announce(message)
     end
 
     SendChatMessage(message, GetAnnouncementChannel())
+end
+
+local function GetSelectedItemDisplayText()
+    if rollState.currentItemLink and rollState.currentItemLink ~= "" then
+        return rollState.currentItemLink
+    end
+
+    return "selected item"
+end
+
+local function ApplyPanelStyle(frame)
+    frame:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1
+    })
+    frame:SetBackdropColor(0, 0, 0, 0.9)
+    frame:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+end
+
+local function ApplyPixelStyle(frame, width, height)
+    frame:SetSize(width, height)
+    ApplyPanelStyle(frame)
+end
+
+local function CreatePixelInput(parent, width, height)
+    local bg = CreateFrame("Frame", nil, parent)
+    ApplyPixelStyle(bg, width, height)
+
+    local editBox = CreateFrame("EditBox", nil, bg)
+    editBox:SetPoint("TOPLEFT", 4, 0)
+    editBox:SetPoint("BOTTOMRIGHT", -4, 0)
+    editBox:SetFontObject(ChatFontNormal)
+    editBox:SetAutoFocus(false)
+    editBox:SetTextInsets(0, 0, 0, 0)
+    editBox:SetBackdrop(nil)
+
+    if editBox.Left then
+        editBox.Left:Hide()
+    end
+
+    if editBox.Middle then
+        editBox.Middle:Hide()
+    end
+
+    if editBox.Right then
+        editBox.Right:Hide()
+    end
+
+    return bg, editBox
+end
+
+local function SetButtonEnabled(button, isEnabled)
+    if not button then
+        return
+    end
+
+    if isEnabled then
+        button:Enable()
+    else
+        button:Disable()
+    end
 end
 
 local function GetUnitByName(nameValue)
@@ -196,8 +379,8 @@ local function ApplyWinnerMarks()
     ClearAllWinnerMarks()
 
     local index = 1
-    while index <= #currentWinnerNames and index <= #RAID_MARK_ORDER do
-        local winnerName = currentWinnerNames[index]
+    while index <= #rollState.currentWinnerNames and index <= #RAID_MARK_ORDER do
+        local winnerName = rollState.currentWinnerNames[index]
         local unit = GetUnitByName(winnerName)
 
         if unit then
@@ -208,17 +391,12 @@ local function ApplyWinnerMarks()
     end
 end
 
-local function ResetRollEntries()
-    wipe(rollEntries)
-    wipe(currentWinnerNames)
-    currentSessionAnnounced = false
-end
-
 local function GetWinnerRollValueByName(nameValue)
     local index = 1
-    while index <= #rollEntries do
-        if rollEntries[index].name == nameValue then
-            return rollEntries[index].roll
+
+    while index <= #rollState.rollEntries do
+        if rollState.rollEntries[index].name == nameValue then
+            return rollState.rollEntries[index].roll
         end
         index = index + 1
     end
@@ -226,18 +404,35 @@ local function GetWinnerRollValueByName(nameValue)
     return 0
 end
 
-local function RebuildCurrentWinners()
-    wipe(currentWinnerNames)
-
+local function GetEnabledRollEntries()
+    local enabledEntries = {}
     local index = 1
-    while index <= #rollEntries and index <= currentWinnerCount do
-        currentWinnerNames[#currentWinnerNames + 1] = rollEntries[index].name
+
+    while index <= #rollState.rollEntries do
+        local entry = rollState.rollEntries[index]
+        if not entry.disabled then
+            enabledEntries[#enabledEntries + 1] = entry
+        end
+        index = index + 1
+    end
+
+    return enabledEntries
+end
+
+local function RebuildCurrentWinners()
+    wipe(rollState.currentWinnerNames)
+
+    local enabledEntries = GetEnabledRollEntries()
+    local index = 1
+
+    while index <= #enabledEntries and index <= rollState.currentWinnerCount do
+        rollState.currentWinnerNames[#rollState.currentWinnerNames + 1] = enabledEntries[index].name
         index = index + 1
     end
 end
 
 local function SortRollEntries()
-    table.sort(rollEntries, function(leftEntry, rightEntry)
+    table.sort(rollState.rollEntries, function(leftEntry, rightEntry)
         if leftEntry.roll == rightEntry.roll then
             return leftEntry.name < rightEntry.name
         end
@@ -250,8 +445,9 @@ end
 
 local function DidPlayerAlreadyRoll(playerName)
     local index = 1
-    while index <= #rollEntries do
-        if rollEntries[index].name == playerName then
+
+    while index <= #rollState.rollEntries do
+        if rollState.rollEntries[index].name == playerName then
             return true
         end
         index = index + 1
@@ -261,11 +457,11 @@ local function DidPlayerAlreadyRoll(playerName)
 end
 
 local function GetCountdownRemaining()
-    if not isCountdownActive then
+    if not rollState.isCountdownActive then
         return 0
     end
 
-    local remainingValue = math.ceil(countdownDuration - (GetTime() - countdownStartTime))
+    local remainingValue = math.ceil(rollState.countdownDuration - (GetTime() - rollState.countdownStartTime))
     if remainingValue < 0 then
         remainingValue = 0
     end
@@ -279,55 +475,45 @@ local function NormalizeRollHistoryViewIndex()
     local historyCount = #RTRollManagerSave.rollHistory
 
     if historyCount <= 0 then
-        rollHistoryViewIndex = 0
+        rollState.rollHistoryViewIndex = 0
         return
     end
 
-    if rollHistoryViewIndex == nil or rollHistoryViewIndex < 0 then
-        rollHistoryViewIndex = 0
+    if rollState.rollHistoryViewIndex == nil or rollState.rollHistoryViewIndex < 0 then
+        rollState.rollHistoryViewIndex = 0
         return
     end
 
-    if rollHistoryViewIndex > historyCount then
-        rollHistoryViewIndex = historyCount
+    if rollState.rollHistoryViewIndex > historyCount then
+        rollState.rollHistoryViewIndex = historyCount
     end
 end
 
 local function IsViewingCurrentRollPage()
     NormalizeRollHistoryViewIndex()
-    return rollHistoryViewIndex == 0
+    return rollState.rollHistoryViewIndex == 0
 end
 
-local function RefreshRollUI()
-    NormalizeRollHistoryViewIndex()
-
-    if RT_RefreshRollUI then
-        RT_RefreshRollUI()
-    end
-
-    if RT_RefreshRollButtons then
-        RT_RefreshRollButtons()
-    end
+local function ResetCurrentRollResults()
+    wipe(rollState.rollEntries)
+    wipe(rollState.currentWinnerNames)
+    rollState.currentSessionAnnounced = false
 end
 
-local function SetCurrentWinnerCount(value)
-    local numericValue = tonumber(value)
+local function ClearSelectedItem()
+    rollState.currentItemLink = nil
+    rollState.currentItemName = nil
+    rollState.currentItemTexture = nil
+    rollState.currentWinnerCount = 1
 
-    if not numericValue then
-        return
+    if uiRefs.itemEditBox then
+        uiRefs.itemEditBox:SetText("")
+        uiRefs.itemEditBox:ClearFocus()
     end
 
-    if numericValue < 1 then
-        numericValue = 1
+    if uiRefs.itemIcon then
+        uiRefs.itemIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
     end
-
-    if numericValue > 8 then
-        numericValue = 8
-    end
-
-    currentWinnerCount = numericValue
-    RebuildCurrentWinners()
-    RefreshRollUI()
 end
 
 local function SetSelectedItem(itemLink)
@@ -337,112 +523,70 @@ local function SetSelectedItem(itemLink)
 
     local itemName, _, _, _, _, _, _, _, _, itemTexture = GetItemInfo(itemLink)
 
-    currentItemLink = itemLink
-    currentItemName = itemName or itemLink
-    currentItemTexture = itemTexture
-    currentWinnerCount = 1
-    currentSessionAnnounced = false
+    rollState.currentItemLink = itemLink
+    rollState.currentItemName = itemName or itemLink
+    rollState.currentItemTexture = itemTexture
+    rollState.currentWinnerCount = 1
+    rollState.currentSessionAnnounced = false
 
-    if itemEditBoxRef then
-        itemEditBoxRef:SetText(itemLink)
-        itemEditBoxRef:ClearFocus()
+    if uiRefs.itemEditBox then
+        uiRefs.itemEditBox:SetText(itemLink)
+        uiRefs.itemEditBox:ClearFocus()
     end
 
-    RefreshRollUI()
-end
+    if uiRefs.itemIcon then
+        uiRefs.itemIcon:SetTexture(itemTexture or "Interface\\Icons\\INV_Misc_QuestionMark")
+    end
 
-local function ClearSelectedItem()
-    currentItemLink = nil
-    currentItemName = nil
-    currentItemTexture = nil
-    currentWinnerCount = 1
-
-    if itemEditBoxRef then
-        itemEditBoxRef:SetText("")
-        itemEditBoxRef:ClearFocus()
+    if uiRefs.winnerCountButton then
+        uiRefs.winnerCountButton:SetText(tostring(rollState.currentWinnerCount))
     end
 
     RefreshRollUI()
 end
 
 local function ResetCurrentRollSession(clearSelectedItemToo)
-    wipe(rollEntries)
-    wipe(currentWinnerNames)
+    wipe(rollState.rollEntries)
+    wipe(rollState.currentWinnerNames)
 
-    isRecordingRolls = false
-    canAcceptRolls = false
-    isCountdownActive = false
-    countdownStartTime = 0
-    countdownLastAnnounced = nil
-
-    currentRollType = nil
-    currentWinnerCount = 1
-    currentSessionAnnounced = false
-    rollHistoryViewIndex = 0
+    rollState.isRecordingRolls = false
+    rollState.canAcceptRolls = false
+    rollState.isCountdownActive = false
+    rollState.countdownStartTime = 0
+    rollState.countdownLastAnnounced = nil
+    rollState.currentRollType = nil
+    rollState.currentWinnerCount = 1
+    rollState.currentSessionAnnounced = false
+    rollState.rollHistoryViewIndex = 0
 
     if clearSelectedItemToo then
-        currentItemLink = nil
-        currentItemName = nil
-        currentItemTexture = nil
-
-        if itemEditBoxRef then
-            itemEditBoxRef:SetText("")
-            itemEditBoxRef:ClearFocus()
-        end
+        ClearSelectedItem()
     end
-end
-
-local function AddRoll(playerName, rollValue)
-    if not isRecordingRolls then
-        return false
-    end
-
-    if not canAcceptRolls then
-        return false
-    end
-
-    if not playerName or not rollValue then
-        return false
-    end
-
-    if DidPlayerAlreadyRoll(playerName) then
-        return false
-    end
-
-    rollHistoryViewIndex = 0
-
-    rollEntries[#rollEntries + 1] = {
-        name = playerName,
-        roll = tonumber(rollValue) or 0
-    }
-
-    SortRollEntries()
-    RefreshRollUI()
-
-    return true
 end
 
 local function BuildRollSnapshot()
     local snapshot = {
-        rollType = currentRollType or "-",
-        itemLink = currentItemLink or "-",
-        winnerCount = currentWinnerCount or 1,
+        timestamp = time(),
+        rollType = rollState.currentRollType or "-",
+        itemLink = rollState.currentItemLink or "-",
+        winnerCount = rollState.currentWinnerCount or 1,
         winners = {},
         rolls = {}
     }
 
     local rollIndex = 1
-    while rollIndex <= #rollEntries do
+    while rollIndex <= #rollState.rollEntries do
         snapshot.rolls[#snapshot.rolls + 1] = {
-            name = rollEntries[rollIndex].name,
-            roll = rollEntries[rollIndex].roll
+            name = rollState.rollEntries[rollIndex].name,
+            roll = rollState.rollEntries[rollIndex].roll,
+            disabled = rollState.rollEntries[rollIndex].disabled and true or false
         }
         rollIndex = rollIndex + 1
     end
 
     local winnerIndex = 1
-    while winnerIndex <= #currentWinnerNames do
-        local winnerName = currentWinnerNames[winnerIndex]
+    while winnerIndex <= #rollState.currentWinnerNames do
+        local winnerName = rollState.currentWinnerNames[winnerIndex]
         snapshot.winners[#snapshot.winners + 1] = {
             name = winnerName,
             roll = GetWinnerRollValueByName(winnerName)
@@ -456,7 +600,7 @@ end
 local function SaveRollSnapshot()
     EnsureSavedVariables()
 
-    if not currentItemLink or #rollEntries == 0 then
+    if not rollState.currentItemLink or #rollState.rollEntries == 0 then
         return
     end
 
@@ -469,7 +613,7 @@ local function SaveRollSnapshot()
         table.remove(rollHistory, #rollHistory)
     end
 
-    rollHistoryViewIndex = 0
+    rollState.rollHistoryViewIndex = 0
 end
 
 local function AddWinnersToHistory()
@@ -478,12 +622,12 @@ local function AddWinnersToHistory()
     local winnerHistory = RTRollManagerSave.winnerHistory
     local winnerIndex = 1
 
-    while winnerIndex <= #currentWinnerNames do
-        local winnerName = currentWinnerNames[winnerIndex]
+    while winnerIndex <= #rollState.currentWinnerNames do
+        local winnerName = rollState.currentWinnerNames[winnerIndex]
 
         table.insert(winnerHistory, 1, {
-            rollType = currentRollType or "-",
-            itemLink = currentItemLink or "-",
+            rollType = rollState.currentRollType or "-",
+            itemLink = rollState.currentItemLink or "-",
             winnerName = winnerName or "-",
             rollValue = GetWinnerRollValueByName(winnerName)
         })
@@ -499,104 +643,136 @@ end
 local function ClearWinnerHistory()
     EnsureSavedVariables()
     wipe(RTRollManagerSave.winnerHistory)
-    RefreshRollUI()
 end
 
 local function ClearRollHistory()
     EnsureSavedVariables()
     wipe(RTRollManagerSave.rollHistory)
-    rollHistoryViewIndex = 0
+    rollState.rollHistoryViewIndex = 0
+end
+
+local function BuildRollStartedMessage()
+    local rollText = (rollState.currentRollType or "Roll") .. " roll started for " .. GetSelectedItemDisplayText() .. "."
+
+    if rollState.currentWinnerCount and rollState.currentWinnerCount > 1 then
+        rollText = rollText .. " Top " .. rollState.currentWinnerCount .. " highest rolls will win."
+    end
+
+    rollText = rollText .. " You have " .. rollState.countdownDuration .. " seconds to roll."
+
+    return rollText
+end
+
+local function CompleteRollSession()
+    if not rollState.isRecordingRolls and not rollState.isCountdownActive then
+        return
+    end
+
+    rollState.isCountdownActive = false
+    rollState.isRecordingRolls = false
+    rollState.canAcceptRolls = false
+    rollState.countdownStartTime = 0
+    rollState.countdownLastAnnounced = nil
+
+    Announce("Rolling ended for " .. GetSelectedItemDisplayText() .. ".")
+
     RefreshRollUI()
 end
 
-local function ClearWinnerHighlight()
-    ClearAllWinnerMarks()
+local function FinishEarly()
+    if not rollState.isCountdownActive then
+        return
+    end
+
+    CompleteRollSession()
 end
 
 local function AnnounceWinners()
-    if #currentWinnerNames == 0 then
+    if #rollState.currentWinnerNames == 0 then
+        return
+    end
+
+    if not rollState.currentItemLink then
         return
     end
 
     local parts = {}
     local index = 1
 
-    while index <= #currentWinnerNames do
-        local winnerName = currentWinnerNames[index]
+    while index <= #rollState.currentWinnerNames do
+        local winnerName = rollState.currentWinnerNames[index]
         parts[#parts + 1] = winnerName .. " (" .. GetWinnerRollValueByName(winnerName) .. ")"
         index = index + 1
     end
 
-    Announce("Winners for " .. (currentItemLink or "selected item") .. ": " .. table.concat(parts, ", "))
+    Announce("Winners for " .. rollState.currentItemLink .. ": " .. table.concat(parts, ", "))
     AddWinnersToHistory()
+    SaveRollSnapshot()
     ApplyWinnerMarks()
 
     ResetCurrentRollSession(true)
-    RefreshRollUI()
 end
 
-local function StartRollSession(rollType)
-    EnsureSavedVariables()
-
-    if not currentItemLink then
+local function SetCurrentWinnerCount(value)
+    local numericValue = tonumber(value)
+    if not numericValue then
         return
     end
 
-    if isCountdownActive then
-        return
+    if numericValue < 1 then
+        numericValue = 1
     end
 
-    rollHistoryViewIndex = 0
-    ResetRollEntries()
-    ClearAllWinnerMarks()
-
-    currentRollType = rollType
-    isRecordingRolls = true
-    canAcceptRolls = true
-
-    countdownDuration = tonumber(RTRollManagerSave.countdownDuration) or 20
-    isCountdownActive = true
-    countdownStartTime = GetTime()
-    countdownLastAnnounced = nil
-
-    local rollText = currentRollType .. " roll started for " .. currentItemLink .. "."
-
-    if currentWinnerCount and currentWinnerCount > 1 then
-        rollText = rollText .. " Top " .. currentWinnerCount .. " highest rolls will win."
+    if numericValue > 8 then
+        numericValue = 8
     end
 
-    rollText = rollText .. " You have " .. countdownDuration .. " seconds to roll."
-
-    Announce(rollText)
-
-    RefreshRollUI()
+    rollState.currentWinnerCount = numericValue
+    RebuildCurrentWinners()
 end
 
-local function CompleteRollSession()
-    if not isRecordingRolls and not isCountdownActive then
+local function ToggleRollDisabledByIndex(indexValue)
+    if not IsViewingCurrentRollPage() then
         return
     end
 
-    isCountdownActive = false
-    isRecordingRolls = false
-    canAcceptRolls = false
-    countdownStartTime = 0
-    countdownLastAnnounced = nil
+    local entry = rollState.rollEntries[indexValue]
+    if not entry then
+        return
+    end
 
-    SaveRollSnapshot()
-    rollHistoryViewIndex = 0
-
-    Announce("Rolling ended for " .. (currentItemLink or "selected item") .. ".")
-
-    RefreshRollUI()
+    entry.disabled = not entry.disabled
+    RebuildCurrentWinners()
 end
 
-local function FinishEarly()
-    if not isCountdownActive then
-        return
+local function AddRoll(playerName, rollValue)
+    if not rollState.isRecordingRolls then
+        return false
     end
 
-    CompleteRollSession()
+    if not rollState.canAcceptRolls then
+        return false
+    end
+
+    if not playerName or not rollValue then
+        return false
+    end
+
+    if DidPlayerAlreadyRoll(playerName) then
+        return false
+    end
+
+    rollState.rollHistoryViewIndex = 0
+
+    rollState.rollEntries[#rollState.rollEntries + 1] = {
+        name = playerName,
+        roll = tonumber(rollValue) or 0,
+        disabled = false
+    }
+
+    SortRollEntries()
+
+    return true
 end
 
 local function BuildCountdownAnnounceMap(durationValue)
@@ -626,18 +802,18 @@ local function BuildCountdownAnnounceMap(durationValue)
 end
 
 local function UpdateCountdown()
-    if not isCountdownActive then
+    if not rollState.isCountdownActive then
         return
     end
 
     local remainingValue = GetCountdownRemaining()
 
-    if countdownLastAnnounced == nil then
-        countdownLastAnnounced = countdownDuration
+    if rollState.countdownLastAnnounced == nil then
+        rollState.countdownLastAnnounced = rollState.countdownDuration
     end
 
-    if remainingValue ~= countdownLastAnnounced then
-        local announceMap = BuildCountdownAnnounceMap(countdownDuration)
+    if remainingValue ~= rollState.countdownLastAnnounced then
+        local announceMap = BuildCountdownAnnounceMap(rollState.countdownDuration)
 
         if remainingValue > 0 and announceMap[remainingValue] then
             if remainingValue <= 3 then
@@ -647,13 +823,38 @@ local function UpdateCountdown()
             end
         end
 
-        countdownLastAnnounced = remainingValue
-        RefreshRollUI()
+        rollState.countdownLastAnnounced = remainingValue
     end
 
     if remainingValue <= 0 then
         CompleteRollSession()
     end
+end
+
+local function StartRollSession(rollType)
+    EnsureSavedVariables()
+
+    if not rollState.currentItemLink then
+        return
+    end
+
+    if rollState.isCountdownActive then
+        return
+    end
+
+    rollState.rollHistoryViewIndex = 0
+    ResetCurrentRollResults()
+    ClearAllWinnerMarks()
+
+    rollState.currentRollType = rollType
+    rollState.isRecordingRolls = true
+    rollState.canAcceptRolls = true
+    rollState.countdownDuration = tonumber(RTRollManagerSave.countdownDuration) or 20
+    rollState.isCountdownActive = true
+    rollState.countdownStartTime = GetTime()
+    rollState.countdownLastAnnounced = nil
+
+    Announce(BuildRollStartedMessage())
 end
 
 local function ParseRollMessage(msg)
@@ -683,12 +884,26 @@ local function OnSystemMessage(msg)
     AddRoll(playerName, rollValue)
 end
 
+local function IsFrameHierarchyVisible(frame)
+    local currentFrame = frame
+
+    while currentFrame do
+        if not currentFrame:IsVisible() then
+            return false
+        end
+
+        currentFrame = currentFrame:GetParent()
+    end
+
+    return true
+end
+
 local function TryInsertItemLink(linkValue)
-    if not itemEditBoxRef then
+    if not uiRefs.itemEditBox then
         return false
     end
 
-    if not rollContentFrameRef or not rollContentFrameRef:IsShown() then
+    if not uiRefs.rollContentFrame or not IsFrameHierarchyVisible(uiRefs.rollContentFrame) then
         return false
     end
 
@@ -701,7 +916,9 @@ local function TryInsertItemLink(linkValue)
     end
 
     SetSelectedItem(linkValue)
-    itemEditBoxRef:ClearFocus()
+    uiRefs.itemEditBox:ClearFocus()
+    RefreshRollUI()
+
     return true
 end
 
@@ -725,62 +942,12 @@ local function InstallInsertLinkHook()
     end
 end
 
-local function ApplyPixelStyle(frame, width, height)
-    frame:SetSize(width, height)
-    frame:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1
-    })
-    frame:SetBackdropColor(0, 0, 0, 0.9)
-    frame:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-end
-
-local function CreatePixelInput(parent, width, height)
-    local bg = CreateFrame("Frame", nil, parent)
-    ApplyPixelStyle(bg, width, height)
-
-    local editBox = CreateFrame("EditBox", nil, bg)
-    editBox:SetPoint("TOPLEFT", 4, 0)
-    editBox:SetPoint("BOTTOMRIGHT", -4, 0)
-    editBox:SetFontObject(ChatFontNormal)
-    editBox:SetAutoFocus(false)
-    editBox:SetTextInsets(0, 0, 0, 0)
-    editBox:SetBackdrop(nil)
-
-    if editBox.Left then
-        editBox.Left:Hide()
-    end
-
-    if editBox.Middle then
-        editBox.Middle:Hide()
-    end
-
-    if editBox.Right then
-        editBox.Right:Hide()
-    end
-
-    return bg, editBox
-end
-
-local function SetButtonEnabled(button, isEnabled)
-    if not button then
-        return
-    end
-
-    if isEnabled then
-        button:Enable()
-    else
-        button:Disable()
-    end
-end
-
 local function GetViewedRollSnapshot()
     EnsureSavedVariables()
     NormalizeRollHistoryViewIndex()
 
     if not IsViewingCurrentRollPage() then
-        return RTRollManagerSave.rollHistory[rollHistoryViewIndex]
+        return RTRollManagerSave.rollHistory[rollState.rollHistoryViewIndex]
     end
 
     return nil
@@ -812,10 +979,10 @@ local function GetDisplayedRollData()
 
     return {
         isHistory = false,
-        itemLink = currentItemLink,
-        rollType = currentRollType,
-        rolls = rollEntries,
-        winnerNames = currentWinnerNames,
+        itemLink = rollState.currentItemLink,
+        rollType = rollState.currentRollType,
+        rolls = rollState.rollEntries,
+        winnerNames = rollState.currentWinnerNames,
         snapshot = nil
     }
 end
@@ -834,6 +1001,7 @@ local function BuildDisplayedWinnerText(displayData)
 
         if displayData.isHistory and displayData.snapshot and displayData.snapshot.winners then
             local historyWinnerIndex = 1
+
             while historyWinnerIndex <= #displayData.snapshot.winners do
                 local historyWinner = displayData.snapshot.winners[historyWinnerIndex]
                 if historyWinner.name == winnerName then
@@ -864,28 +1032,28 @@ local function SaveMSChangesText(textValue)
 end
 
 local function SetMSChangesEditMode(isEditing)
-    isEditingMSChanges = isEditing and true or false
+    rollState.isEditingMSChanges = isEditing and true or false
 
-    if not msChangesEditBoxRef or not msChangesToggleButtonRef then
+    if not uiRefs.msChangesEditBox or not uiRefs.msChangesToggleButton then
         return
     end
 
-    if isEditingMSChanges then
-        msChangesToggleButtonRef:SetText("Save")
-        msChangesEditBoxRef:EnableMouse(true)
-        msChangesEditBoxRef:EnableKeyboard(true)
-        msChangesEditBoxRef:SetTextColor(0, 1, 0)
-        msChangesEditBoxRef:SetFocus()
+    if rollState.isEditingMSChanges then
+        uiRefs.msChangesToggleButton:SetText("Save")
+        uiRefs.msChangesEditBox:EnableMouse(true)
+        uiRefs.msChangesEditBox:EnableKeyboard(true)
+        uiRefs.msChangesEditBox:SetTextColor(0, 1, 0)
+        uiRefs.msChangesEditBox:SetFocus()
     else
-        msChangesToggleButtonRef:SetText("Edit")
-        msChangesEditBoxRef:ClearFocus()
-        msChangesEditBoxRef:EnableMouse(false)
-        msChangesEditBoxRef:EnableKeyboard(false)
-        msChangesEditBoxRef:SetTextColor(1, 1, 1)
+        uiRefs.msChangesToggleButton:SetText("Edit")
+        uiRefs.msChangesEditBox:ClearFocus()
+        uiRefs.msChangesEditBox:EnableMouse(false)
+        uiRefs.msChangesEditBox:EnableKeyboard(false)
+        uiRefs.msChangesEditBox:SetTextColor(1, 1, 1)
 
         local savedText = GetMSChangesText()
-        if msChangesEditBoxRef:GetText() ~= savedText then
-            msChangesEditBoxRef:SetText(savedText)
+        if uiRefs.msChangesEditBox:GetText() ~= savedText then
+            uiRefs.msChangesEditBox:SetText(savedText)
         end
     end
 end
@@ -893,8 +1061,8 @@ end
 local function AnnounceMSChanges()
     local textValue = ""
 
-    if msChangesEditBoxRef then
-        textValue = msChangesEditBoxRef:GetText() or ""
+    if uiRefs.msChangesEditBox then
+        textValue = uiRefs.msChangesEditBox:GetText() or ""
     else
         textValue = GetMSChangesText()
     end
@@ -923,42 +1091,432 @@ local function AnnounceMSChanges()
     end
 end
 
-rollFrame:RegisterEvent("CHAT_MSG_SYSTEM")
-rollFrame:SetScript("OnEvent", function(self, event, ...)
-    if event == "CHAT_MSG_SYSTEM" then
-        OnSystemMessage(...)
+local function EnsureRollRowButton(indexValue)
+    if uiRefs.rollRowButtons[indexValue] then
+        return uiRefs.rollRowButtons[indexValue], uiRefs.rollRowTexts[indexValue], uiRefs.rollRowStrikeLines[indexValue]
     end
-end)
 
-rollFrame:SetScript("OnUpdate", function()
-    UpdateCountdown()
-end)
+    local rowButton = CreateFrame("Button", nil, uiRefs.rollScrollChild)
+    rowButton:SetHeight(18)
+    rowButton:RegisterForClicks("RightButtonUp")
+    rowButton:SetNormalTexture(nil)
+    rowButton:SetHighlightTexture(nil)
+    rowButton:SetPushedTexture(nil)
+    rowButton:SetDisabledTexture(nil)
 
-SLASH_RTROLLRESET1 = "/rtrollreset"
-SlashCmdList["RTROLLRESET"] = function()
-    ResetCurrentRollSession(true)
-    RefreshRollUI()
-    print("Roll Manager reset.")
+    if indexValue == 1 then
+        rowButton:SetPoint("TOPLEFT", 0, 0)
+        rowButton:SetPoint("TOPRIGHT", 0, 0)
+    else
+        rowButton:SetPoint("TOPLEFT", uiRefs.rollRowButtons[indexValue - 1], "BOTTOMLEFT", 0, -2)
+        rowButton:SetPoint("TOPRIGHT", uiRefs.rollRowButtons[indexValue - 1], "BOTTOMRIGHT", 0, -2)
+    end
+
+    local rowText = rowButton:CreateFontString(nil, "OVERLAY", "ChatFontSmall")
+    rowText:SetPoint("TOPLEFT", 0, 0)
+    rowText:SetPoint("BOTTOMRIGHT", 0, 0)
+    rowText:SetJustifyH("LEFT")
+    rowText:SetJustifyV("MIDDLE")
+
+    local strikeLine = rowButton:CreateTexture(nil, "ARTWORK")
+    strikeLine:SetTexture("Interface\\Buttons\\WHITE8X8")
+    strikeLine:SetHeight(1)
+    strikeLine:SetVertexColor(0.7, 0.7, 0.7, 0.95)
+    strikeLine:Hide()
+
+    rowButton.text = rowText
+    rowButton.strikeLine = strikeLine
+
+    rowButton:SetScript("OnClick", function(_, button)
+        if button ~= "RightButton" then
+            return
+        end
+
+        if not IsViewingCurrentRollPage() then
+            return
+        end
+
+        ToggleRollDisabledByIndex(indexValue)
+        RefreshRollUI()
+    end)
+
+    uiRefs.rollRowButtons[indexValue] = rowButton
+    uiRefs.rollRowTexts[indexValue] = rowText
+    uiRefs.rollRowStrikeLines[indexValue] = strikeLine
+
+    return rowButton, rowText, strikeLine
 end
 
-function CreateRollManagerTabContent(parent, onClose)
-    local f = CreateFrame("Frame", nil, parent)
-    rollContentFrameRef = f
-    f:SetAllPoints()
-    f:Hide()
+local function RefreshRollListUI()
+    if not uiRefs.logLabel or not uiRefs.rollScrollChild or not uiRefs.logBg then
+        return
+    end
 
-    InstallInsertLinkHook()
+    EnsureSavedVariables()
+    NormalizeRollHistoryViewIndex()
 
-    local _, S = TryGetElvUISkinModule()
+    local displayData = GetDisplayedRollData()
+    local displayedRolls = displayData.rolls or {}
+    local displayedWinners = displayData.winnerNames or {}
 
-    local selectLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    selectLabel:SetPoint("TOPLEFT", 20, -20)
+    local historyCount = #RTRollManagerSave.rollHistory
+    local totalPages = historyCount
+    local pageNumber = totalPages + 1
+
+    if not IsViewingCurrentRollPage() then
+        pageNumber = (totalPages - rollState.rollHistoryViewIndex) + 1
+    end
+
+    uiRefs.logLabel:SetText("#" .. pageNumber .. " Roll List:")
+
+    local availableWidth = uiRefs.logBg:GetWidth() - 40
+    if availableWidth < 50 then
+        availableWidth = 50
+    end
+
+    if #displayedRolls == 0 then
+        local rowButton, rowText, strikeLine = EnsureRollRowButton(1)
+        rowButton:SetWidth(availableWidth)
+        rowButton:Show()
+        rowButton:EnableMouse(false)
+        rowText:SetText("No rolls yet.")
+        rowText:SetTextColor(1, 1, 1)
+        strikeLine:Hide()
+
+        local emptyTextWidth = rowText:GetStringWidth() or availableWidth
+        if emptyTextWidth < 1 then
+            emptyTextWidth = availableWidth
+        end
+
+        strikeLine:ClearAllPoints()
+        strikeLine:SetPoint("LEFT", rowText, "LEFT", 0, 0)
+        strikeLine:SetPoint("RIGHT", rowText, "LEFT", emptyTextWidth, 0)
+        strikeLine:SetPoint("CENTER", rowText, "CENTER", 0, 0)
+
+        local hideIndex = 2
+        while uiRefs.rollRowButtons[hideIndex] do
+            uiRefs.rollRowButtons[hideIndex]:Hide()
+            hideIndex = hideIndex + 1
+        end
+
+        uiRefs.rollScrollChild:SetWidth(availableWidth)
+        uiRefs.rollScrollChild:SetHeight(22)
+        uiRefs.rollScrollFrame:UpdateScrollChildRect()
+        return
+    end
+
+    local index = 1
+    while index <= #displayedRolls do
+        local rowButton, rowText, strikeLine = EnsureRollRowButton(index)
+        local entry = displayedRolls[index]
+
+        rowButton:SetWidth(availableWidth)
+        rowButton:Show()
+        rowButton:EnableMouse(displayData.isHistory ~= true)
+
+        local isWinner = false
+        local winnerIndex = 1
+
+        while winnerIndex <= #displayedWinners do
+            if displayedWinners[winnerIndex] == entry.name then
+                isWinner = true
+                break
+            end
+            winnerIndex = winnerIndex + 1
+        end
+
+        local prefix = "  "
+        if isWinner and not entry.disabled then
+            prefix = "* "
+        end
+
+        rowText:SetText(string.format("%s%s - %d", prefix, entry.name, entry.roll))
+
+        if entry.disabled then
+            rowText:SetTextColor(0.65, 0.65, 0.65)
+            strikeLine:Show()
+        elseif isWinner then
+            rowText:SetTextColor(0.2, 1, 0.2)
+            strikeLine:Hide()
+        else
+            rowText:SetTextColor(1, 1, 1)
+            strikeLine:Hide()
+        end
+
+        local textWidth = rowText:GetStringWidth() or availableWidth
+        if textWidth < 1 then
+            textWidth = availableWidth
+        end
+
+        strikeLine:ClearAllPoints()
+        strikeLine:SetPoint("LEFT", rowText, "LEFT", 0, 0)
+        strikeLine:SetPoint("RIGHT", rowText, "LEFT", textWidth, 0)
+        strikeLine:SetPoint("CENTER", rowText, "CENTER", 0, 0)
+
+        index = index + 1
+    end
+
+    local hideIndex = index
+    while uiRefs.rollRowButtons[hideIndex] do
+        uiRefs.rollRowButtons[hideIndex]:Hide()
+        hideIndex = hideIndex + 1
+    end
+
+    local contentHeight = (#displayedRolls * 20) + 4
+    uiRefs.rollScrollChild:SetWidth(availableWidth)
+    uiRefs.rollScrollChild:SetHeight(contentHeight)
+    uiRefs.rollScrollFrame:UpdateScrollChildRect()
+end
+
+local function RefreshWinnerHistoryUI()
+    if not uiRefs.historyText then
+        return
+    end
+
+    EnsureSavedVariables()
+
+    local historyLines = {}
+    local winnerHistory = RTRollManagerSave.winnerHistory or {}
+    local historyIndex = 1
+
+    while historyIndex <= #winnerHistory do
+        local entry = winnerHistory[historyIndex]
+        historyLines[#historyLines + 1] = string.format(
+            "%s - %s - %s - %d",
+            entry.rollType or "-",
+            entry.itemLink or "-",
+            entry.winnerName or "-",
+            entry.rollValue or 0
+        )
+        historyIndex = historyIndex + 1
+    end
+
+    if #historyLines == 0 then
+        uiRefs.historyText:SetText("No winners yet.")
+    else
+        uiRefs.historyText:SetText(table.concat(historyLines, "\n"))
+    end
+
+    local availableWidth = uiRefs.historyBg:GetWidth() - 40
+    if availableWidth < 50 then
+        availableWidth = 50
+    end
+
+    uiRefs.historyScrollChild:SetWidth(availableWidth)
+    uiRefs.historyText:SetWidth(availableWidth)
+    uiRefs.historyScrollChild:SetHeight(GetSafeStringHeight(uiRefs.historyText, 20) + 20)
+    uiRefs.historyScrollFrame:UpdateScrollChildRect()
+end
+
+local function RefreshMSChangesUI()
+    if not uiRefs.msChangesEditBox or not uiRefs.msChangesBg then
+        return
+    end
+
+    if not rollState.isEditingMSChanges then
+        local savedText = GetMSChangesText()
+        if uiRefs.msChangesEditBox:GetText() ~= savedText then
+            uiRefs.msChangesEditBox:SetText(savedText)
+        end
+    end
+
+    local availableWidth = uiRefs.msChangesBg:GetWidth() - 40
+    if availableWidth < 50 then
+        availableWidth = 50
+    end
+
+    uiRefs.msChangesEditBox:SetWidth(availableWidth)
+
+    local textHeight = GetSafeEditBoxTextHeight(uiRefs.msChangesEditBox, 20)
+    if textHeight < 20 then
+        textHeight = 20
+    end
+
+    uiRefs.msChangesEditBox:SetHeight(textHeight + 8)
+    uiRefs.msChangesScrollChild:SetWidth(availableWidth)
+    uiRefs.msChangesScrollChild:SetHeight(textHeight + 20)
+    uiRefs.msChangesScrollFrame:UpdateScrollChildRect()
+end
+
+local function RefreshItemSectionUI()
+    if not uiRefs.itemEditBox or not uiRefs.itemIcon or not uiRefs.winnerCountButton then
+        return
+    end
+
+    if rollState.currentItemLink then
+        uiRefs.itemEditBox:SetText(rollState.currentItemLink)
+    else
+        uiRefs.itemEditBox:SetText("")
+    end
+
+    uiRefs.winnerCountButton:SetText(tostring(rollState.currentWinnerCount))
+
+    if rollState.currentItemTexture then
+        uiRefs.itemIcon:SetTexture(rollState.currentItemTexture)
+    else
+        uiRefs.itemIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+    end
+end
+
+local function RefreshWinnerLabelUI()
+    if not uiRefs.winnerLabel then
+        return
+    end
+
+    local displayData = GetDisplayedRollData()
+    uiRefs.winnerLabel:SetText(BuildDisplayedWinnerText(displayData) or "")
+end
+
+local function RefreshRollHeaderLinkUI()
+    if not uiRefs.rollHeaderLinkText then
+        return
+    end
+
+    local displayData = GetDisplayedRollData()
+    local displayedItemLink = displayData.itemLink
+
+    if displayedItemLink and displayedItemLink ~= "-" then
+        uiRefs.rollHeaderLinkText:SetText(displayedItemLink)
+    else
+        uiRefs.rollHeaderLinkText:SetText("")
+    end
+end
+
+local function RefreshCountdownUI()
+    if not uiRefs.countdownEditBox or not uiRefs.countdownBg or not uiRefs.countdownText then
+        return
+    end
+
+    if rollState.isCountdownActive then
+        if uiRefs.countdownEditBox:HasFocus() then
+            uiRefs.countdownEditBox:ClearFocus()
+        end
+
+        uiRefs.countdownBg:Hide()
+        uiRefs.countdownText:SetText(tostring(GetCountdownRemaining()))
+        uiRefs.countdownText:Show()
+    else
+        uiRefs.countdownBg:Show()
+        uiRefs.countdownText:Hide()
+
+        if not uiRefs.countdownEditBox:HasFocus() then
+            uiRefs.countdownEditBox:SetText(tostring(RTRollManagerSave.countdownDuration or 20))
+        end
+
+        uiRefs.countdownEditBox:SetTextColor(1, 1, 1)
+    end
+end
+
+local function RefreshNavigationButtons()
+    if not uiRefs.leftHistoryButton or not uiRefs.rightHistoryButton then
+        return
+    end
+
+    EnsureSavedVariables()
+
+    local hasRollHistory = #RTRollManagerSave.rollHistory > 0
+    local canGoToOlder = false
+    local canGoToNewer = false
+
+    if hasRollHistory then
+        if IsViewingCurrentRollPage() then
+            canGoToOlder = true
+            canGoToNewer = false
+        else
+            canGoToNewer = true
+            canGoToOlder = rollState.rollHistoryViewIndex < #RTRollManagerSave.rollHistory
+        end
+    end
+
+    SetButtonEnabled(uiRefs.leftHistoryButton, canGoToOlder)
+    SetButtonEnabled(uiRefs.rightHistoryButton, canGoToNewer)
+end
+
+local function GetRollActionState()
+    local hasSelectedItem = rollState.currentItemLink ~= nil and rollState.currentItemLink ~= ""
+    local isViewingCurrentPage = IsViewingCurrentRollPage()
+    local hasCurrentRolls = #rollState.rollEntries > 0
+    local hasCurrentWinners = #rollState.currentWinnerNames > 0
+
+    return {
+        hasSelectedItem = hasSelectedItem,
+        canFinishEarly = rollState.isCountdownActive,
+        canAnnounceWinners = (not rollState.isCountdownActive)
+            and isViewingCurrentPage
+            and hasCurrentRolls
+            and hasCurrentWinners
+            and (not rollState.currentSessionAnnounced),
+        isViewingCurrentPage = isViewingCurrentPage
+    }
+end
+
+RefreshActionButtons = function()
+    local actionState = GetRollActionState()
+
+    SetButtonEnabled(uiRefs.msButton, actionState.hasSelectedItem)
+    SetButtonEnabled(uiRefs.osButton, actionState.hasSelectedItem)
+    SetButtonEnabled(uiRefs.finishEarlyButton, actionState.canFinishEarly)
+    SetButtonEnabled(uiRefs.announceWinnersButton, actionState.canAnnounceWinners)
+    SetButtonEnabled(uiRefs.msChangesToggleButton, true)
+    SetButtonEnabled(uiRefs.msChangesAnnounceButton, GetMSChangesText() ~= "")
+
+    if actionState.isViewingCurrentPage then
+        uiRefs.announceWinnersButton:SetText("Announce Winners")
+    else
+        uiRefs.announceWinnersButton:SetText("History View")
+    end
+end
+
+RefreshRollUI = function()
+    if not uiRefs.rollContentFrame or not uiRefs.rollContentFrame:IsVisible() then
+        return
+    end
+
+    EnsureSavedVariables()
+    NormalizeRollHistoryViewIndex()
+
+    RefreshRollListUI()
+    RefreshWinnerHistoryUI()
+    RefreshMSChangesUI()
+    RefreshItemSectionUI()
+    RefreshWinnerLabelUI()
+    RefreshRollHeaderLinkUI()
+    RefreshCountdownUI()
+    RefreshNavigationButtons()
+    RefreshActionButtons()
+end
+
+local function ShowWinnerCountButton()
+    if not uiRefs.winnerCountEditBox or not uiRefs.winnerCountBg or not uiRefs.winnerCountButton then
+        return
+    end
+
+    uiRefs.winnerCountEditBox:ClearFocus()
+    uiRefs.winnerCountBg:Hide()
+    uiRefs.winnerCountButton:Show()
+    uiRefs.winnerCountButton:SetText(tostring(rollState.currentWinnerCount))
+end
+
+local function ShowWinnerCountEditBox()
+    if not uiRefs.winnerCountEditBox or not uiRefs.winnerCountBg or not uiRefs.winnerCountButton then
+        return
+    end
+
+    uiRefs.winnerCountButton:Hide()
+    uiRefs.winnerCountBg:Show()
+    uiRefs.winnerCountEditBox:SetText(tostring(rollState.currentWinnerCount))
+    uiRefs.winnerCountEditBox:SetFocus()
+    uiRefs.winnerCountEditBox:HighlightText()
+end
+
+local function CreateItemSelectorSection(parent, skinModule)
+    local selectLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    selectLabel:SetPoint("TOPLEFT", UI_CONSTANTS.LEFT_MARGIN, UI_CONSTANTS.TOP_MARGIN)
     selectLabel:SetText("Select Item:")
 
-    local itemButton = CreateFrame("Button", nil, f)
-    itemButton:SetSize(36, 36)
-    itemButton:SetPoint("TOPLEFT", 20, -48)
-    itemButton:SetNormalTexture("Interface\\Buttons\\UI-Quickslot2")
+    local itemButton = CreateFrame("Button", nil, parent)
+    itemButton:SetSize(UI_CONSTANTS.ITEM_ICON_SIZE, UI_CONSTANTS.ITEM_ICON_SIZE)
+    itemButton:SetPoint("TOPLEFT", UI_CONSTANTS.LEFT_MARGIN, UI_CONSTANTS.TOP_SECTION_Y)
     itemButton:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
     itemButton:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
@@ -966,63 +1524,54 @@ function CreateRollManagerTabContent(parent, onClose)
     itemIcon:SetAllPoints()
     itemIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
 
-    local itemBg, itemEditBox = CreatePixelInput(f, 300, 28)
+    local itemBg, itemEditBox = CreatePixelInput(parent, UI_CONSTANTS.ITEM_INPUT_WIDTH, UI_CONSTANTS.INPUT_HEIGHT)
     itemBg:SetPoint("LEFT", itemButton, "RIGHT", 8, 0)
 
-    local winnerCountButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    winnerCountButton:SetSize(32, 28)
+    local winnerCountButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    winnerCountButton:SetSize(UI_CONSTANTS.SMALL_BUTTON_WIDTH, UI_CONSTANTS.INPUT_HEIGHT)
     winnerCountButton:SetPoint("LEFT", itemBg, "RIGHT", 6, 0)
     winnerCountButton:SetText("1")
-    if S then
-        S:HandleButton(winnerCountButton)
-    end
+    HandleButtonSkin(skinModule, winnerCountButton)
 
-    local winnerCountBg, winnerCountEditBox = CreatePixelInput(f, 32, 28)
+    local winnerCountBg, winnerCountEditBox = CreatePixelInput(parent, UI_CONSTANTS.SMALL_BUTTON_WIDTH, UI_CONSTANTS.INPUT_HEIGHT)
     winnerCountBg:SetPoint("LEFT", itemBg, "RIGHT", 6, 0)
     winnerCountBg:Hide()
 
     winnerCountEditBox:SetNumeric(true)
     winnerCountEditBox:SetMaxLetters(1)
 
-    local function ShowWinnerCountButton()
-        winnerCountEditBox:ClearFocus()
-        winnerCountBg:Hide()
-        winnerCountButton:Show()
-        winnerCountButton:SetText(tostring(currentWinnerCount))
-    end
+    uiRefs.itemButton = itemButton
+    uiRefs.itemIcon = itemIcon
+    uiRefs.itemBg = itemBg
+    uiRefs.itemEditBox = itemEditBox
+    uiRefs.winnerCountButton = winnerCountButton
+    uiRefs.winnerCountBg = winnerCountBg
+    uiRefs.winnerCountEditBox = winnerCountEditBox
 
-    local function ShowWinnerCountEditBox()
-        winnerCountButton:Hide()
-        winnerCountBg:Show()
-        winnerCountEditBox:SetText(tostring(currentWinnerCount))
-        winnerCountEditBox:SetFocus()
-        winnerCountEditBox:HighlightText()
-    end
-
-    winnerCountEditBox:SetScript("OnEscapePressed", function(self)
+    winnerCountEditBox:SetScript("OnEscapePressed", function()
         ShowWinnerCountButton()
     end)
 
     winnerCountEditBox:SetScript("OnEnterPressed", function(self)
-        local textValue = self:GetText()
-        local numericValue = tonumber(textValue)
+        local numericValue = tonumber(self:GetText())
 
         if numericValue and numericValue >= 1 and numericValue <= 8 then
             SetCurrentWinnerCount(numericValue)
         end
 
         ShowWinnerCountButton()
+        RefreshRollUI()
     end)
 
     winnerCountEditBox:SetScript("OnEditFocusLost", function(self)
-        local textValue = self:GetText()
-        local numericValue = tonumber(textValue)
+        local numericValue = tonumber(self:GetText())
 
         if numericValue and numericValue >= 1 and numericValue <= 8 then
             SetCurrentWinnerCount(numericValue)
         end
 
         ShowWinnerCountButton()
+        RefreshRollUI()
     end)
 
     winnerCountEditBox:SetScript("OnTextChanged", function(self, userInput)
@@ -1037,7 +1586,7 @@ function CreateRollManagerTabContent(parent, onClose)
 
         local numericValue = tonumber(textValue)
         if not numericValue or numericValue < 1 or numericValue > 8 then
-            self:SetText(tostring(currentWinnerCount))
+            self:SetText(tostring(rollState.currentWinnerCount))
             self:HighlightText()
         end
     end)
@@ -1046,7 +1595,6 @@ function CreateRollManagerTabContent(parent, onClose)
         ShowWinnerCountEditBox()
     end)
 
-    itemEditBoxRef = itemEditBox
     itemEditBox:EnableKeyboard(true)
     itemEditBox:SetAutoFocus(false)
     itemEditBox:SetText("")
@@ -1064,11 +1612,11 @@ function CreateRollManagerTabContent(parent, onClose)
     end)
 
     itemEditBox:SetScript("OnEditFocusLost", function(self)
-        self:SetText(currentItemLink or "")
+        self:SetText(rollState.currentItemLink or "")
     end)
 
     itemEditBox:SetScript("OnChar", function(self)
-        self:SetText(currentItemLink or "")
+        self:SetText(rollState.currentItemLink or "")
         self:HighlightText(0, 0)
     end)
 
@@ -1080,68 +1628,148 @@ function CreateRollManagerTabContent(parent, onClose)
         local textValue = self:GetText()
         if textValue and textValue ~= "" and string.find(textValue, "|Hitem:") then
             SetSelectedItem(textValue)
-            if currentItemTexture then
-                itemIcon:SetTexture(currentItemTexture)
-            end
             self:HighlightText(0, 0)
+            RefreshRollUI()
             return
         end
 
-        self:SetText(currentItemLink or "")
+        self:SetText(rollState.currentItemLink or "")
         self:HighlightText(0, 0)
     end)
 
-    local msButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    msButton:SetSize(120, 28)
-    msButton:SetPoint("TOPLEFT", 20, -96)
-    msButton:SetText("Start MS")
-    if S then
-        S:HandleButton(msButton)
-    end
+    itemButton:SetScript("OnEnter", function(self)
+        if rollState.currentItemLink then
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetHyperlink(rollState.currentItemLink)
+            GameTooltip:Show()
+        end
+    end)
 
-    local osButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    osButton:SetSize(120, 28)
+    itemButton:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+
+    itemButton:SetScript("OnClick", function(_, button)
+        if button == "RightButton" then
+            ClearSelectedItem()
+            RefreshRollUI()
+            return
+        end
+
+        if CursorHasItem() then
+            local cursorType, itemID, itemLink = GetCursorInfo()
+
+            if cursorType == "item" and itemLink then
+                SetSelectedItem(itemLink)
+            end
+
+            ClearCursor()
+            RefreshRollUI()
+            return
+        end
+
+        itemEditBox:SetFocus()
+        itemEditBox:HighlightText()
+    end)
+end
+
+local function CreateActionButtonsSection(parent, skinModule)
+    local msButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    msButton:SetSize(UI_CONSTANTS.STANDARD_BUTTON_WIDTH, UI_CONSTANTS.BUTTON_HEIGHT)
+    msButton:SetPoint("TOPLEFT", UI_CONSTANTS.LEFT_MARGIN, UI_CONSTANTS.ACTIONS_Y)
+    msButton:SetText("Start MS")
+    HandleButtonSkin(skinModule, msButton)
+
+    local osButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    osButton:SetSize(UI_CONSTANTS.STANDARD_BUTTON_WIDTH, UI_CONSTANTS.BUTTON_HEIGHT)
     osButton:SetPoint("LEFT", msButton, "RIGHT", 10, 0)
     osButton:SetText("Start OS")
-    if S then
-        S:HandleButton(osButton)
-    end
+    HandleButtonSkin(skinModule, osButton)
 
-    local finishEarlyButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    finishEarlyButton:SetSize(120, 28)
+    local finishEarlyButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    finishEarlyButton:SetSize(UI_CONSTANTS.STANDARD_BUTTON_WIDTH, UI_CONSTANTS.BUTTON_HEIGHT)
     finishEarlyButton:SetPoint("LEFT", osButton, "RIGHT", 10, 0)
     finishEarlyButton:SetText("Finish Early")
-    if S then
-        S:HandleButton(finishEarlyButton)
-    end
+    HandleButtonSkin(skinModule, finishEarlyButton)
 
-    local timerLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    timerLabel:SetPoint("TOPLEFT", 20, -138)
+    uiRefs.msButton = msButton
+    uiRefs.osButton = osButton
+    uiRefs.finishEarlyButton = finishEarlyButton
+
+    msButton:SetScript("OnClick", function()
+        StartRollSession("MS")
+        RefreshRollUI()
+    end)
+
+    osButton:SetScript("OnClick", function()
+        StartRollSession("OS")
+        RefreshRollUI()
+    end)
+
+    finishEarlyButton:SetScript("OnClick", function()
+        FinishEarly()
+        RefreshRollUI()
+    end)
+end
+
+local function CreateCountdownSection(parent)
+    local timerLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    timerLabel:SetPoint("TOPLEFT", UI_CONSTANTS.LEFT_MARGIN, UI_CONSTANTS.COUNTDOWN_Y)
     timerLabel:SetText("Countdown:")
 
-    local countdownBg, countdownEditBox = CreatePixelInput(f, 70, 28)
+    local countdownBg, countdownEditBox = CreatePixelInput(parent, UI_CONSTANTS.COUNTDOWN_INPUT_WIDTH, UI_CONSTANTS.INPUT_HEIGHT)
     countdownBg:SetPoint("LEFT", timerLabel, "RIGHT", 8, 0)
 
-    local countdownText = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    local countdownText = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     countdownText:SetPoint("LEFT", timerLabel, "RIGHT", 8, 0)
-    countdownText:SetWidth(70)
+    countdownText:SetWidth(UI_CONSTANTS.COUNTDOWN_INPUT_WIDTH)
     countdownText:SetJustifyH("LEFT")
     countdownText:SetText("")
     countdownText:Hide()
 
-    countdownBgRef = countdownBg
-    countdownTextRef = countdownText
+    uiRefs.countdownBg = countdownBg
+    uiRefs.countdownEditBox = countdownEditBox
+    uiRefs.countdownText = countdownText
 
     countdownEditBox:SetNumeric(true)
     countdownEditBox:SetMaxLetters(2)
     countdownEditBox:SetText(tostring(RTRollManagerSave and RTRollManagerSave.countdownDuration or 20))
 
     countdownEditBox:SetScript("OnEscapePressed", function(self)
+        self:SetText(tostring(RTRollManagerSave.countdownDuration or 20))
         self:ClearFocus()
     end)
 
     countdownEditBox:SetScript("OnEnterPressed", function(self)
+        local value = tonumber(self:GetText())
+
+        if value and value > 0 then
+            EnsureSavedVariables()
+            RTRollManagerSave.countdownDuration = value
+            rollState.countdownDuration = value
+            self:SetText(tostring(value))
+        else
+            self:SetText(tostring(RTRollManagerSave.countdownDuration or 20))
+        end
+
         self:ClearFocus()
+    end)
+
+    countdownEditBox:SetScript("OnEditFocusGained", function(self)
+        self:HighlightText()
+    end)
+
+    countdownEditBox:SetScript("OnEditFocusLost", function(self)
+        local value = tonumber(self:GetText())
+
+        if value and value > 0 then
+            EnsureSavedVariables()
+            RTRollManagerSave.countdownDuration = value
+            rollState.countdownDuration = value
+            self:SetText(tostring(value))
+        else
+            self:SetText(tostring(RTRollManagerSave.countdownDuration or 20))
+        end
     end)
 
     countdownEditBox:SetScript("OnTextChanged", function(self, userInput)
@@ -1149,39 +1777,71 @@ function CreateRollManagerTabContent(parent, onClose)
             return
         end
 
-        if isCountdownActive then
+        if rollState.isCountdownActive then
             return
         end
 
-        local value = tonumber(self:GetText())
+        local textValue = self:GetText()
+
+        if textValue == "" then
+            return
+        end
+
+        local value = tonumber(textValue)
         if value and value > 0 then
             EnsureSavedVariables()
             RTRollManagerSave.countdownDuration = value
-            countdownDuration = value
+            rollState.countdownDuration = value
         end
     end)
+end
 
-    local announceWinnersButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    announceWinnersButton:SetSize(140, 24)
-    announceWinnersButton:SetPoint("TOPLEFT", 20, -170)
+local function CreateWinnersSection(parent, skinModule)
+    local announceWinnersButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    announceWinnersButton:SetSize(UI_CONSTANTS.LARGE_BUTTON_WIDTH, 24)
+    announceWinnersButton:SetPoint("TOPLEFT", UI_CONSTANTS.LEFT_MARGIN, UI_CONSTANTS.WINNERS_Y)
     announceWinnersButton:SetText("Announce Winners")
-    if S then
-        S:HandleButton(announceWinnersButton)
-    end
+    HandleButtonSkin(skinModule, announceWinnersButton)
 
-    local winnerLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local winnerLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     winnerLabel:SetPoint("LEFT", announceWinnersButton, "RIGHT", 10, 0)
-    winnerLabel:SetWidth(300)
+    winnerLabel:SetWidth(UI_CONSTANTS.WINNER_LABEL_WIDTH)
     winnerLabel:SetJustifyH("LEFT")
     winnerLabel:SetText("")
 
-    local logLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    logLabel:SetPoint("TOPLEFT", 20, -204)
+    uiRefs.announceWinnersButton = announceWinnersButton
+    uiRefs.winnerLabel = winnerLabel
+
+    announceWinnersButton:SetScript("OnClick", function()
+        if rollState.isCountdownActive then
+            return
+        end
+
+        if not IsViewingCurrentRollPage() then
+            return
+        end
+
+        if #rollState.currentWinnerNames == 0 then
+            return
+        end
+
+        if rollState.currentSessionAnnounced then
+            return
+        end
+
+        AnnounceWinners()
+        RefreshRollUI()
+    end)
+end
+
+local function CreateRollLogSection(parent, skinModule)
+    local logLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    logLabel:SetPoint("TOPLEFT", UI_CONSTANTS.LEFT_MARGIN, UI_CONSTANTS.LIST_LABEL_Y)
     logLabel:SetText("Roll List:")
 
-    local rollHeaderLinkButton = CreateFrame("Button", nil, f)
+    local rollHeaderLinkButton = CreateFrame("Button", nil, parent)
     rollHeaderLinkButton:SetPoint("LEFT", logLabel, "RIGHT", 6, 0)
-    rollHeaderLinkButton:SetSize(210, 20)
+    rollHeaderLinkButton:SetSize(UI_CONSTANTS.ROLL_HEADER_WIDTH, 20)
     rollHeaderLinkButton:RegisterForClicks("LeftButtonUp")
 
     local rollHeaderLinkText = rollHeaderLinkButton:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -1189,103 +1849,22 @@ function CreateRollManagerTabContent(parent, onClose)
     rollHeaderLinkText:SetJustifyH("LEFT")
     rollHeaderLinkButton.text = rollHeaderLinkText
 
-    local msChangesLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    msChangesLabel:SetPoint("TOPLEFT", 452, -20)
-    msChangesLabel:SetText("MS Changes:")
+    local logBg = CreateFrame("Frame", nil, parent)
+    logBg:SetPoint("TOPLEFT", UI_CONSTANTS.LEFT_MARGIN, UI_CONSTANTS.CONTENT_TOP_Y)
+    logBg:SetPoint("BOTTOMRIGHT", -UI_CONSTANTS.RIGHT_COLUMN_X, 58)
+    ApplyPanelStyle(logBg)
 
-    local msChangesToggleButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    msChangesToggleButton:SetSize(70, 24)
-    msChangesToggleButton:SetPoint("TOPRIGHT", -20, -14)
-    msChangesToggleButton:SetText("Edit")
-    if S then
-        S:HandleButton(msChangesToggleButton)
-    end
-
-    local msChangesAnnounceButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    msChangesAnnounceButton:SetSize(90, 24)
-    msChangesAnnounceButton:SetPoint("RIGHT", msChangesToggleButton, "LEFT", -8, 0)
-    msChangesAnnounceButton:SetText("Announce")
-    if S then
-        S:HandleButton(msChangesAnnounceButton)
-    end
-
-    local msChangesBg = CreateFrame("Frame", nil, f)
-    msChangesBg:SetPoint("TOPLEFT", 452, -48)
-    msChangesBg:SetPoint("TOPRIGHT", -20, -48)
-    msChangesBg:SetHeight(105)
-    msChangesBg:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1
-    })
-    msChangesBg:SetBackdropColor(0, 0, 0, 0.9)
-    msChangesBg:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-
-    local msChangesScrollFrame = CreateFrame("ScrollFrame", "RTRollManagerMSChangesScrollFrame", msChangesBg, "UIPanelScrollFrameTemplate")
-    msChangesScrollFrame:SetPoint("TOPLEFT", 8, -8)
-    msChangesScrollFrame:SetPoint("BOTTOMRIGHT", -28, 8)
-
-    local msChangesScrollChild = CreateFrame("Frame", "RTRollManagerMSChangesScrollChild", msChangesScrollFrame)
-    msChangesScrollChild:SetSize(1, 1)
-    msChangesScrollFrame:SetScrollChild(msChangesScrollChild)
-
-    local msChangesEditBox = CreateFrame("EditBox", nil, msChangesScrollChild)
-    msChangesEditBox:SetPoint("TOPLEFT", 0, 0)
-    msChangesEditBox:SetMultiLine(true)
-    msChangesEditBox:SetAutoFocus(false)
-    msChangesEditBox:SetFontObject(ChatFontSmall)
-    msChangesEditBox:SetTextInsets(0, 0, 0, 0)
-    msChangesEditBox:SetJustifyH("LEFT")
-    msChangesEditBox:SetText(GetMSChangesText())
-    msChangesEditBox:EnableMouse(false)
-    msChangesEditBox:EnableKeyboard(false)
-    msChangesEditBox:SetTextColor(1, 1, 1)
-
-    msChangesEditBoxRef = msChangesEditBox
-    msChangesToggleButtonRef = msChangesToggleButton
-    msChangesAnnounceButtonRef = msChangesAnnounceButton
-
-    local historyLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    historyLabel:SetPoint("TOPLEFT", 452, -204)
-    historyLabel:SetText("Latest Winners:")
-
-    local logBg = CreateFrame("Frame", nil, f)
-    logBg:SetPoint("TOPLEFT", 20, -230)
-    logBg:SetPoint("BOTTOMRIGHT", -452, 58)
-    logBg:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1
-    })
-    logBg:SetBackdropColor(0, 0, 0, 0.9)
-    logBg:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-
-    local historyBg = CreateFrame("Frame", nil, f)
-    historyBg:SetPoint("TOPLEFT", 452, -230)
-    historyBg:SetPoint("BOTTOMRIGHT", -20, 58)
-    historyBg:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1
-    })
-    historyBg:SetBackdropColor(0, 0, 0, 0.9)
-    historyBg:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-
-    local rightHistoryButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    rightHistoryButton:SetSize(28, 24)
+    local rightHistoryButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    rightHistoryButton:SetSize(UI_CONSTANTS.HISTORY_NAV_BUTTON_SIZE, 24)
     rightHistoryButton:SetPoint("TOPRIGHT", logBg, "TOPRIGHT", -2, 28)
     rightHistoryButton:SetText(">")
-    if S then
-        S:HandleButton(rightHistoryButton)
-    end
+    HandleButtonSkin(skinModule, rightHistoryButton)
 
-    local leftHistoryButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    leftHistoryButton:SetSize(28, 24)
+    local leftHistoryButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    leftHistoryButton:SetSize(UI_CONSTANTS.HISTORY_NAV_BUTTON_SIZE, 24)
     leftHistoryButton:SetPoint("RIGHT", rightHistoryButton, "LEFT", -4, 0)
     leftHistoryButton:SetText("<")
-    if S then
-        S:HandleButton(leftHistoryButton)
-    end
+    HandleButtonSkin(skinModule, leftHistoryButton)
 
     local scrollFrame = CreateFrame("ScrollFrame", "RTRollManagerScrollFrame", logBg, "UIPanelScrollFrameTemplate")
     scrollFrame:SetPoint("TOPLEFT", 8, -8)
@@ -1295,85 +1874,17 @@ function CreateRollManagerTabContent(parent, onClose)
     scrollChild:SetSize(1, 1)
     scrollFrame:SetScrollChild(scrollChild)
 
-    local rollText = scrollChild:CreateFontString(nil, "OVERLAY", "ChatFontSmall")
-    rollText:SetPoint("TOPLEFT", 0, 0)
-    rollText:SetJustifyH("LEFT")
-    rollText:SetJustifyV("TOP")
+    local rollText = nil
 
-    local historyScrollFrame = CreateFrame("ScrollFrame", "RTRollManagerHistoryScrollFrame", historyBg, "UIPanelScrollFrameTemplate")
-    historyScrollFrame:SetPoint("TOPLEFT", 8, -8)
-    historyScrollFrame:SetPoint("BOTTOMRIGHT", -28, 8)
-
-    local historyScrollChild = CreateFrame("Frame", "RTRollManagerHistoryScrollChild", historyScrollFrame)
-    historyScrollChild:SetSize(1, 1)
-    historyScrollFrame:SetScrollChild(historyScrollChild)
-
-    local historyText = historyScrollChild:CreateFontString(nil, "OVERLAY", "ChatFontSmall")
-    historyText:SetPoint("TOPLEFT", 0, 0)
-    historyText:SetJustifyH("LEFT")
-    historyText:SetJustifyV("TOP")
-    winnerHistoryTextRef = historyText
-
-    msChangesEditBox:SetScript("OnEscapePressed", function(self)
-        self:ClearFocus()
-        self:SetText(GetMSChangesText())
-        SetMSChangesEditMode(false)
-        RefreshRollUI()
-    end)
-
-    msChangesEditBox:SetScript("OnEnterPressed", function(self)
-        if IsShiftKeyDown() then
-            self:Insert("\n")
-            return
-        end
-
-        SaveMSChangesText(self:GetText() or "")
-        SetMSChangesEditMode(false)
-        RefreshRollUI()
-    end)
-
-    msChangesEditBox:SetScript("OnTextChanged", function(self)
-        local availableWidth = msChangesBg:GetWidth() - 40
-        if availableWidth < 50 then
-            availableWidth = 50
-        end
-
-        self:SetWidth(availableWidth)
-
-        local textHeight = 20
-        if self.GetTextHeight then
-            textHeight = self:GetTextHeight()
-        end
-
-        if textHeight < 20 then
-            textHeight = 20
-        end
-
-        self:SetHeight(textHeight + 8)
-        msChangesScrollChild:SetWidth(availableWidth)
-        msChangesScrollChild:SetHeight(textHeight + 20)
-        msChangesScrollFrame:UpdateScrollChildRect()
-    end)
-
-    msChangesToggleButton:SetScript("OnClick", function()
-        if not isEditingMSChanges then
-            SetMSChangesEditMode(true)
-            return
-        end
-
-        SaveMSChangesText(msChangesEditBox:GetText() or "")
-        SetMSChangesEditMode(false)
-        RefreshRollUI()
-    end)
-
-    msChangesAnnounceButton:SetScript("OnClick", function()
-        if isEditingMSChanges then
-            SaveMSChangesText(msChangesEditBox:GetText() or "")
-            SetMSChangesEditMode(false)
-        end
-
-        AnnounceMSChanges()
-    end)
+    uiRefs.logLabel = logLabel
+    uiRefs.rollHeaderLinkButton = rollHeaderLinkButton
+    uiRefs.rollHeaderLinkText = rollHeaderLinkText
+    uiRefs.logBg = logBg
+    uiRefs.leftHistoryButton = leftHistoryButton
+    uiRefs.rightHistoryButton = rightHistoryButton
+    uiRefs.rollScrollFrame = scrollFrame
+    uiRefs.rollScrollChild = scrollChild
+    uiRefs.rollText = rollText
 
     rollHeaderLinkButton:SetScript("OnEnter", function(self)
         local displayData = GetDisplayedRollData()
@@ -1399,40 +1910,6 @@ function CreateRollManagerTabContent(parent, onClose)
         end
     end)
 
-    itemButton:SetScript("OnEnter", function(self)
-        if currentItemLink then
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetHyperlink(currentItemLink)
-            GameTooltip:Show()
-        end
-    end)
-
-    itemButton:SetScript("OnLeave", function()
-        GameTooltip:Hide()
-    end)
-
-    itemButton:SetScript("OnClick", function(_, button)
-        if button == "RightButton" then
-            ClearSelectedItem()
-            itemIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
-            return
-        end
-
-        if CursorHasItem() then
-            local cursorType, itemID, itemLink = GetCursorInfo()
-            if cursorType == "item" and itemLink then
-                SetSelectedItem(itemLink)
-                if currentItemTexture then
-                    itemIcon:SetTexture(currentItemTexture)
-                end
-            end
-            ClearCursor()
-        else
-            itemEditBox:SetFocus()
-            itemEditBox:HighlightText()
-        end
-    end)
-
     leftHistoryButton:SetScript("OnClick", function()
         EnsureSavedVariables()
         NormalizeRollHistoryViewIndex()
@@ -1442,9 +1919,9 @@ function CreateRollManagerTabContent(parent, onClose)
         end
 
         if IsViewingCurrentRollPage() then
-            rollHistoryViewIndex = 1
-        elseif rollHistoryViewIndex < #RTRollManagerSave.rollHistory then
-            rollHistoryViewIndex = rollHistoryViewIndex + 1
+            rollState.rollHistoryViewIndex = 1
+        elseif rollState.rollHistoryViewIndex < #RTRollManagerSave.rollHistory then
+            rollState.rollHistoryViewIndex = rollState.rollHistoryViewIndex + 1
         end
 
         RefreshRollUI()
@@ -1458,312 +1935,251 @@ function CreateRollManagerTabContent(parent, onClose)
             return
         end
 
-        if rollHistoryViewIndex > 1 then
-            rollHistoryViewIndex = rollHistoryViewIndex - 1
+        if rollState.rollHistoryViewIndex > 1 then
+            rollState.rollHistoryViewIndex = rollState.rollHistoryViewIndex - 1
         else
-            rollHistoryViewIndex = 0
+            rollState.rollHistoryViewIndex = 0
         end
 
         RefreshRollUI()
     end)
+end
 
-    announceWinnersButton:SetScript("OnClick", function()
-        if isCountdownActive then
-            return
-        end
+local function CreateMSChangesSection(parent, skinModule)
+    local msChangesLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    msChangesLabel:SetPoint("TOPLEFT", UI_CONSTANTS.RIGHT_COLUMN_X, UI_CONSTANTS.TOP_MARGIN)
+    msChangesLabel:SetText("MS Changes:")
 
-        if not IsViewingCurrentRollPage() then
-            return
-        end
+    local msChangesToggleButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    msChangesToggleButton:SetSize(70, 24)
+    msChangesToggleButton:SetPoint("TOPRIGHT", -20, -14)
+    msChangesToggleButton:SetText("Edit")
+    HandleButtonSkin(skinModule, msChangesToggleButton)
 
-        if #currentWinnerNames == 0 then
-            return
-        end
+    local msChangesAnnounceButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    msChangesAnnounceButton:SetSize(90, 24)
+    msChangesAnnounceButton:SetPoint("RIGHT", msChangesToggleButton, "LEFT", -8, 0)
+    msChangesAnnounceButton:SetText("Announce")
+    HandleButtonSkin(skinModule, msChangesAnnounceButton)
 
-        if currentSessionAnnounced then
-            return
-        end
+    local msChangesBg = CreateFrame("Frame", nil, parent)
+    msChangesBg:SetPoint("TOPLEFT", UI_CONSTANTS.RIGHT_COLUMN_X, UI_CONSTANTS.TOP_SECTION_Y)
+    msChangesBg:SetPoint("TOPRIGHT", -20, UI_CONSTANTS.TOP_SECTION_Y)
+    msChangesBg:SetHeight(UI_CONSTANTS.MS_CHANGES_HEIGHT)
+    ApplyPanelStyle(msChangesBg)
 
-        AnnounceWinners()
+    local msChangesScrollFrame = CreateFrame("ScrollFrame", "RTRollManagerMSChangesScrollFrame", msChangesBg, "UIPanelScrollFrameTemplate")
+    msChangesScrollFrame:SetPoint("TOPLEFT", 8, -8)
+    msChangesScrollFrame:SetPoint("BOTTOMRIGHT", -28, 8)
+
+    local msChangesScrollChild = CreateFrame("Frame", "RTRollManagerMSChangesScrollChild", msChangesScrollFrame)
+    msChangesScrollChild:SetSize(1, 1)
+    msChangesScrollFrame:SetScrollChild(msChangesScrollChild)
+
+    local msChangesEditBox = CreateFrame("EditBox", nil, msChangesScrollChild)
+    msChangesEditBox:SetPoint("TOPLEFT", 0, 0)
+    msChangesEditBox:SetMultiLine(true)
+    msChangesEditBox:SetAutoFocus(false)
+    msChangesEditBox:SetFontObject(ChatFontSmall)
+    msChangesEditBox:SetTextInsets(0, 0, 0, 0)
+    msChangesEditBox:SetJustifyH("LEFT")
+    msChangesEditBox:SetText(GetMSChangesText())
+    msChangesEditBox:EnableMouse(false)
+    msChangesEditBox:EnableKeyboard(false)
+    msChangesEditBox:SetTextColor(1, 1, 1)
+
+    uiRefs.msChangesBg = msChangesBg
+    uiRefs.msChangesEditBox = msChangesEditBox
+    uiRefs.msChangesToggleButton = msChangesToggleButton
+    uiRefs.msChangesAnnounceButton = msChangesAnnounceButton
+    uiRefs.msChangesScrollFrame = msChangesScrollFrame
+    uiRefs.msChangesScrollChild = msChangesScrollChild
+
+    msChangesEditBox:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+        self:SetText(GetMSChangesText())
+        SetMSChangesEditMode(false)
+        RefreshRollUI()
     end)
 
-    RT_RefreshRollButtons = function()
-        local hasSelectedItem = currentItemLink ~= nil and currentItemLink ~= ""
-        local isViewingCurrentPage = IsViewingCurrentRollPage()
-        local hasCurrentRolls = #rollEntries > 0
-        local hasCurrentWinners = #currentWinnerNames > 0
-
-        local canAnnounceCurrentSession = (not isCountdownActive)
-            and isViewingCurrentPage
-            and hasCurrentRolls
-            and hasCurrentWinners
-            and (not currentSessionAnnounced)
-
-        SetButtonEnabled(msButton, hasSelectedItem)
-        SetButtonEnabled(osButton, hasSelectedItem)
-        SetButtonEnabled(finishEarlyButton, isCountdownActive)
-        SetButtonEnabled(announceWinnersButton, canAnnounceCurrentSession)
-        SetButtonEnabled(msChangesToggleButton, true)
-        SetButtonEnabled(msChangesAnnounceButton, GetMSChangesText() ~= "")
-
-        if isViewingCurrentPage then
-            announceWinnersButton:SetText("Announce Winners")
-        else
-            announceWinnersButton:SetText("History View")
-        end
-
-    end
-
-    RT_RefreshRollUI = function()
-        if not f:IsVisible() then
+    msChangesEditBox:SetScript("OnEnterPressed", function(self)
+        if IsShiftKeyDown() then
+            self:Insert("\n")
             return
         end
 
-        EnsureSavedVariables()
-        NormalizeRollHistoryViewIndex()
-
-        local displayData = GetDisplayedRollData()
-        local displayedRolls = displayData.rolls or {}
-        local displayedItemLink = displayData.itemLink
-        local displayedWinners = displayData.winnerNames or {}
-
-        local historyCount = RTRollManagerSave and #RTRollManagerSave.rollHistory or 0
-        local totalPages = historyCount
-        local pageNumber = totalPages + 1
-
-        if not IsViewingCurrentRollPage() then
-            pageNumber = (totalPages - rollHistoryViewIndex) + 1
-        end
-
-        logLabel:SetText("#" .. pageNumber .. " Roll List:")
-
-        local lines = {}
-        local index = 1
-        while index <= #displayedRolls do
-            local entry = displayedRolls[index]
-            local prefix = "  "
-
-            local winnerIndex = 1
-            while winnerIndex <= #displayedWinners do
-                if displayedWinners[winnerIndex] == entry.name then
-                    prefix = "* "
-                    break
-                end
-                winnerIndex = winnerIndex + 1
-            end
-
-            lines[#lines + 1] = string.format("%s%s - %d", prefix, entry.name, entry.roll)
-            index = index + 1
-        end
-
-        if #lines == 0 then
-            rollText:SetText("No rolls yet.")
-        else
-            rollText:SetText(table.concat(lines, "\n"))
-        end
-
-        local historyLines = {}
-        local winnerHistory = RTRollManagerSave and RTRollManagerSave.winnerHistory or {}
-        local historyIndex = 1
-
-        while historyIndex <= #winnerHistory do
-            local entry = winnerHistory[historyIndex]
-            historyLines[#historyLines + 1] = string.format(
-                "%s - %s - %s - %d",
-                entry.rollType or "-",
-                entry.itemLink or "-",
-                entry.winnerName or "-",
-                entry.rollValue or 0
-            )
-            historyIndex = historyIndex + 1
-        end
-
-        if #historyLines == 0 then
-            historyText:SetText("No winners yet.")
-        else
-            historyText:SetText(table.concat(historyLines, "\n"))
-        end
-
-        local logAvailableWidth = logBg:GetWidth() - 40
-        if logAvailableWidth < 50 then
-            logAvailableWidth = 50
-        end
-
-        scrollChild:SetWidth(logAvailableWidth)
-        rollText:SetWidth(logAvailableWidth)
-        scrollChild:SetHeight(rollText:GetStringHeight() + 20)
-        scrollFrame:UpdateScrollChildRect()
-
-        local historyAvailableWidth = historyBg:GetWidth() - 40
-        if historyAvailableWidth < 50 then
-            historyAvailableWidth = 50
-        end
-
-        historyScrollChild:SetWidth(historyAvailableWidth)
-        historyText:SetWidth(historyAvailableWidth)
-        historyScrollChild:SetHeight(historyText:GetStringHeight() + 20)
-        historyScrollFrame:UpdateScrollChildRect()
-
-        if msChangesEditBoxRef then
-            if not isEditingMSChanges then
-                local savedMSChangesText = GetMSChangesText()
-                if msChangesEditBoxRef:GetText() ~= savedMSChangesText then
-                    msChangesEditBoxRef:SetText(savedMSChangesText)
-                end
-            end
-
-            local msChangesAvailableWidth = msChangesBg:GetWidth() - 40
-            if msChangesAvailableWidth < 50 then
-                msChangesAvailableWidth = 50
-            end
-
-            msChangesEditBoxRef:SetWidth(msChangesAvailableWidth)
-
-            local msChangesTextHeight = 20
-            if msChangesEditBoxRef.GetTextHeight then
-                msChangesTextHeight = msChangesEditBoxRef:GetTextHeight()
-            end
-
-            if msChangesTextHeight < 20 then
-                msChangesTextHeight = 20
-            end
-
-            msChangesEditBoxRef:SetHeight(msChangesTextHeight + 8)
-            msChangesScrollChild:SetWidth(msChangesAvailableWidth)
-            msChangesScrollChild:SetHeight(msChangesTextHeight + 20)
-            msChangesScrollFrame:UpdateScrollChildRect()
-        end
-
-        if currentItemLink then
-            itemEditBox:SetText(currentItemLink)
-        else
-            itemEditBox:SetText("")
-        end
-
-        winnerCountButton:SetText(tostring(currentWinnerCount))
-
-        if currentItemTexture then
-            itemIcon:SetTexture(currentItemTexture)
-        else
-            itemIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
-        end
-
-        local displayedWinnerText = BuildDisplayedWinnerText(displayData)
-        winnerLabel:SetText(displayedWinnerText or "")
-
-        if displayedItemLink and displayedItemLink ~= "-" then
-            rollHeaderLinkText:SetText(displayedItemLink)
-        else
-            rollHeaderLinkText:SetText("")
-        end
-
-        timerLabel:SetText("Countdown:")
-
-        if isCountdownActive then
-            if countdownEditBox:HasFocus() then
-                countdownEditBox:ClearFocus()
-            end
-
-            if countdownBgRef then
-                countdownBgRef:Hide()
-            end
-
-            if countdownTextRef then
-                countdownTextRef:SetText(tostring(GetCountdownRemaining()))
-                countdownTextRef:Show()
-            end
-        else
-            if countdownBgRef then
-                countdownBgRef:Show()
-            end
-
-            if countdownTextRef then
-                countdownTextRef:Hide()
-            end
-
-            countdownEditBox:SetText(tostring(RTRollManagerSave.countdownDuration or 20))
-            countdownEditBox:SetTextColor(1, 1, 1)
-        end
-
-        local hasRollHistory = RTRollManagerSave and #RTRollManagerSave.rollHistory > 0
-        local canGoToOlder = false
-        local canGoToNewer = false
-
-        if hasRollHistory then
-            if IsViewingCurrentRollPage() then
-                canGoToOlder = true
-                canGoToNewer = false
-            else
-                canGoToNewer = true
-                canGoToOlder = rollHistoryViewIndex < #RTRollManagerSave.rollHistory
-            end
-        end
-
-        SetButtonEnabled(leftHistoryButton, canGoToOlder)
-        SetButtonEnabled(rightHistoryButton, canGoToNewer)
-
-        if RT_RefreshRollButtons then
-            RT_RefreshRollButtons()
-        end
-    end
-
-    msButton:SetScript("OnClick", function()
-        StartRollSession("MS")
+        SaveMSChangesText(self:GetText() or "")
+        SetMSChangesEditMode(false)
+        RefreshRollUI()
     end)
 
-    osButton:SetScript("OnClick", function()
-        StartRollSession("OS")
+    msChangesEditBox:SetScript("OnTextChanged", function()
+        RefreshMSChangesUI()
     end)
 
-    finishEarlyButton:SetScript("OnClick", function()
-        FinishEarly()
+    msChangesToggleButton:SetScript("OnClick", function()
+        if not rollState.isEditingMSChanges then
+            SetMSChangesEditMode(true)
+            RefreshRollUI()
+            return
+        end
+
+        SaveMSChangesText(msChangesEditBox:GetText() or "")
+        SetMSChangesEditMode(false)
+        RefreshRollUI()
     end)
 
-    local closeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    closeBtn:SetSize(100, 28)
-    closeBtn:SetPoint("BOTTOMRIGHT", -18, 12)
-    closeBtn:SetText("Close")
-    if S then
-        S:HandleButton(closeBtn)
-    end
-    closeBtn:SetScript("OnClick", onClose)
+    msChangesAnnounceButton:SetScript("OnClick", function()
+        if rollState.isEditingMSChanges then
+            SaveMSChangesText(msChangesEditBox:GetText() or "")
+            SetMSChangesEditMode(false)
+        end
 
-    local clearWinnersSavedButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    clearWinnersSavedButton:SetSize(170, 28)
-    clearWinnersSavedButton:SetPoint("BOTTOMLEFT", 18, 12)
+        AnnounceMSChanges()
+        RefreshRollUI()
+    end)
+end
+
+local function CreateWinnerHistorySection(parent)
+    local historyLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    historyLabel:SetPoint("TOPLEFT", UI_CONSTANTS.RIGHT_COLUMN_X, UI_CONSTANTS.LIST_LABEL_Y)
+    historyLabel:SetText("Latest Winners:")
+
+    local historyBg = CreateFrame("Frame", nil, parent)
+    historyBg:SetPoint("TOPLEFT", UI_CONSTANTS.RIGHT_COLUMN_X, UI_CONSTANTS.CONTENT_TOP_Y)
+    historyBg:SetPoint("BOTTOMRIGHT", -20, 58)
+    ApplyPanelStyle(historyBg)
+
+    local historyScrollFrame = CreateFrame("ScrollFrame", "RTRollManagerHistoryScrollFrame", historyBg, "UIPanelScrollFrameTemplate")
+    historyScrollFrame:SetPoint("TOPLEFT", 8, -8)
+    historyScrollFrame:SetPoint("BOTTOMRIGHT", -28, 8)
+
+    local historyScrollChild = CreateFrame("Frame", "RTRollManagerHistoryScrollChild", historyScrollFrame)
+    historyScrollChild:SetSize(1, 1)
+    historyScrollFrame:SetScrollChild(historyScrollChild)
+
+    local historyText = historyScrollChild:CreateFontString(nil, "OVERLAY", "ChatFontSmall")
+    historyText:SetPoint("TOPLEFT", 0, 0)
+    historyText:SetJustifyH("LEFT")
+    historyText:SetJustifyV("TOP")
+
+    uiRefs.historyBg = historyBg
+    uiRefs.historyScrollFrame = historyScrollFrame
+    uiRefs.historyScrollChild = historyScrollChild
+    uiRefs.historyText = historyText
+end
+
+local function CreateFooterButtons(parent, skinModule, onClose)
+    local closeButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    closeButton:SetSize(UI_CONSTANTS.CLOSE_BUTTON_WIDTH, UI_CONSTANTS.BUTTON_HEIGHT)
+    closeButton:SetPoint("BOTTOMRIGHT", -18, UI_CONSTANTS.FOOTER_Y)
+    closeButton:SetText("Close")
+    HandleButtonSkin(skinModule, closeButton)
+
+    local clearWinnersSavedButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    clearWinnersSavedButton:SetSize(UI_CONSTANTS.CLEAR_WINNERS_BUTTON_WIDTH, UI_CONSTANTS.BUTTON_HEIGHT)
+    clearWinnersSavedButton:SetPoint("BOTTOMLEFT", 18, UI_CONSTANTS.FOOTER_Y)
     clearWinnersSavedButton:SetText("Clear Saved Winners")
-    if S then
-        S:HandleButton(clearWinnersSavedButton)
-    end
+    HandleButtonSkin(skinModule, clearWinnersSavedButton)
 
-    local clearRollsSavedButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    clearRollsSavedButton:SetSize(150, 28)
+    local clearRollsSavedButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    clearRollsSavedButton:SetSize(UI_CONSTANTS.CLEAR_ROLLS_BUTTON_WIDTH, UI_CONSTANTS.BUTTON_HEIGHT)
     clearRollsSavedButton:SetPoint("LEFT", clearWinnersSavedButton, "RIGHT", 10, 0)
     clearRollsSavedButton:SetText("Clear Saved Rolls")
-    if S then
-        S:HandleButton(clearRollsSavedButton)
-    end
+    HandleButtonSkin(skinModule, clearRollsSavedButton)
+
+    uiRefs.closeButton = closeButton
+    uiRefs.clearWinnersSavedButton = clearWinnersSavedButton
+    uiRefs.clearRollsSavedButton = clearRollsSavedButton
+
+    closeButton:SetScript("OnClick", onClose)
 
     clearRollsSavedButton:SetScript("OnClick", function()
         ClearRollHistory()
+        RefreshRollUI()
     end)
 
     clearWinnersSavedButton:SetScript("OnClick", function()
         ClearWinnerHistory()
+        RefreshRollUI()
     end)
+end
 
-    f:SetScript("OnShow", function()
+SLASH_RTROLLRESET1 = "/rtrollreset"
+SlashCmdList["RTROLLRESET"] = function()
+    ResetCurrentRollSession(true)
+    RefreshRollUI()
+    print("Roll Manager reset.")
+end
+
+function CreateRollManagerTabContent(parent, onClose)
+    local frame = CreateFrame("Frame", nil, parent)
+    frame:SetAllPoints()
+    frame:Hide()
+
+    uiRefs.rollContentFrame = frame
+
+    InstallInsertLinkHook()
+
+    local _, skinModule = TryGetElvUISkinModule()
+
+    CreateItemSelectorSection(frame, skinModule)
+    CreateActionButtonsSection(frame, skinModule)
+    CreateCountdownSection(frame)
+    CreateWinnersSection(frame, skinModule)
+    CreateRollLogSection(frame, skinModule)
+    CreateMSChangesSection(frame, skinModule)
+    CreateWinnerHistorySection(frame)
+    CreateFooterButtons(frame, skinModule, onClose)
+
+    frame:SetScript("OnShow", function()
         EnsureSavedVariables()
         NormalizeRollHistoryViewIndex()
-        countdownEditBox:SetText(tostring(RTRollManagerSave.countdownDuration or 20))
 
-        if msChangesEditBoxRef then
-            msChangesEditBoxRef:SetText(GetMSChangesText())
+        if uiRefs.countdownEditBox then
+            uiRefs.countdownEditBox:SetText(tostring(RTRollManagerSave.countdownDuration or 20))
+        end
+
+        if uiRefs.msChangesEditBox then
+            uiRefs.msChangesEditBox:SetText(GetMSChangesText())
         end
 
         SetMSChangesEditMode(false)
         RefreshRollUI()
     end)
 
-    return f
+    return frame
 end
+
+rollFrame:RegisterEvent("CHAT_MSG_SYSTEM")
+rollFrame:SetScript("OnEvent", function(self, event, ...)
+    if event == "CHAT_MSG_SYSTEM" then
+        OnSystemMessage(...)
+        RefreshRollUI()
+    end
+end)
+
+rollFrame:SetScript("OnUpdate", function()
+    UpdateCountdown()
+
+    if uiRefs.rollContentFrame and uiRefs.rollContentFrame:IsVisible() then
+        RefreshCountdownUI()
+        RefreshActionButtons()
+    end
+end)
+
+loader:RegisterEvent("ADDON_LOADED")
+loader:SetScript("OnEvent", function(self, event, arg1)
+    if arg1 ~= addonName then
+        return
+    end
+
+    EnsureSavedVariables()
+    rollState.countdownDuration = tonumber(RTRollManagerSave.countdownDuration) or 20
+
+    if RefreshStatusOverlay then
+        RefreshStatusOverlay()
+    end
+
+    self:UnregisterEvent("ADDON_LOADED")
+end)
