@@ -28,6 +28,10 @@ local TAB_DEFINITIONS = {
     {
         name = "Master Looter",
         creator = CreateMasterLooterTabContent
+    },
+    {
+        name = "Roll Manager",
+        creator = CreateRollManagerTabContent
     }
 }
 
@@ -173,7 +177,8 @@ local function ApplySkin()
         return
     end
 
-    SkinMainFrameWithElvUIIfAvailable(mainFrame, mainFrame._closeX, tabButtons[1], tabButtons[2])
+    SkinMainFrameWithElvUIIfAvailable(mainFrame, mainFrame._closeX,     unpack(tabButtons)
+)
 end
 
 local function CreateMainFrameIfNeeded()

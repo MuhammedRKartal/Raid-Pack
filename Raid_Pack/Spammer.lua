@@ -1205,7 +1205,11 @@ function CreateSpammerTabContent(parent, onClose)
                 local intervalValue = tonumber(row.timer:GetText()) or 30
 
                 if not row.nextSend or row.nextSend <= 0 then
-                    row.nextSend = now + intervalValue
+                    if row.config.name == "World" then
+                        row.nextSend = now
+                    else
+                        row.nextSend = now + intervalValue
+                    end
                 end
             end
         else

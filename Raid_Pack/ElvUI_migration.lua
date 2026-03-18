@@ -55,7 +55,7 @@ local function GetScrollBarFromScrollFrame(scrollFrame)
     return nil
 end
 
-function SkinMainFrameWithElvUIIfAvailable(mainFrame, closeX, tab1Button, tab2Button)
+function SkinMainFrameWithElvUIIfAvailable(mainFrame, closeX, ...)
     local e, s = TryGetElvUISkinModule()
     if not e or not s or not mainFrame then
         return false
@@ -73,8 +73,11 @@ function SkinMainFrameWithElvUIIfAvailable(mainFrame, closeX, tab1Button, tab2Bu
         s:HandleCloseButton(closeX, mainFrame)
     end
 
-    HandleCheckBoxIfPossible(s, tab1Button)
-    HandleCheckBoxIfPossible(s, tab2Button)
+    local tabButtons = { ... }
+
+    for i = 1, #tabButtons do
+        HandleCheckBoxIfPossible(s, tabButtons[i])
+    end
 
     return true
 end
