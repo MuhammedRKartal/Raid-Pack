@@ -12,8 +12,10 @@ local loader = CreateFrame("Frame")
 local RefreshRollUI = nil
 local RefreshActionButtons = nil
 local HasActiveUnannouncedWinners = nil
+local ResetCurrentRollSession = nil
+local pendingItemLinkToSet = nil
 
-local originalChatEdit_InsertLink = ChatEdit_InsertLink
+local originalChatEdit_InsertLink = nil
 local isInsertLinkHookInstalled = false
 
 local RAID_MARK_ORDER = {
@@ -505,6 +507,34 @@ local function ResetCurrentRollResults()
     rollState.currentSessionAnnounced = false
 end
 
+function HasActiveUnannouncedWinners()
+    if not IsViewingCurrentRollPage() then
+        return false
+    end
+
+    if rollState.isCountdownActive then
+        return false
+    end
+
+    if rollState.currentSessionAnnounced then
+        return false
+    end
+
+    if not rollState.currentItemLink or rollState.currentItemLink == "" then
+        return false
+    end
+
+    if #rollState.rollEntries == 0 then
+        return false
+    end
+
+    if #rollState.currentWinnerNames == 0 then
+        return false
+    end
+
+    return true
+end
+
 local function ClearSelectedItem()
     if HasActiveUnannouncedWinners() then
         StaticPopup_Show("RTROLLMANAGER_ACTIVE_WINNER_ITEM_WARNING")
@@ -523,6 +553,10 @@ local function ClearSelectedItem()
 
     if uiRefs.itemIcon then
         uiRefs.itemIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+    end
+
+    if uiRefs.winnerCountButton then
+        uiRefs.winnerCountButton:SetText("1")
     end
 end
 
@@ -552,66 +586,14 @@ local function SetSelectedItemInternal(itemLink)
         uiRefs.winnerCountButton:SetText(tostring(rollState.currentWinnerCount))
     end
 
+    if uiRefs.winnerCountEditBox then
+        uiRefs.winnerCountEditBox:SetText(tostring(rollState.currentWinnerCount))
+    end
+
     RefreshRollUI()
 end
 
-StaticPopupDialogs["RTROLLMANAGER_ACTIVE_WINNER_ITEM_WARNING"] = {
-    text = "There is still an active winner for the current roll.\nChanging the selected item will clear the current roll results.\n\nDo you want to continue?",
-    button1 = YES,
-    button2 = NO,
-    OnAccept = function()
-        ResetCurrentRollSession(false)
-
-        if pendingItemLinkToSet and pendingItemLinkToSet ~= "" then
-            SetSelectedItemInternal(pendingItemLinkToSet)
-        else
-            rollState.currentItemLink = nil
-            rollState.currentItemName = nil
-            rollState.currentItemTexture = nil
-            rollState.currentWinnerCount = 1
-
-            if uiRefs.itemEditBox then
-                uiRefs.itemEditBox:SetText("")
-                uiRefs.itemEditBox:ClearFocus()
-            end
-
-            if uiRefs.itemIcon then
-                uiRefs.itemIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
-            end
-
-            if uiRefs.winnerCountButton then
-                uiRefs.winnerCountButton:SetText("1")
-            end
-        end
-
-        pendingItemLinkToSet = nil
-        RefreshRollUI()
-    end,
-    OnCancel = function()
-        pendingItemLinkToSet = nil
-        RefreshRollUI()
-    end,
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3
-}
-
-local function SetSelectedItem(itemLink)
-    if not itemLink or itemLink == "" then
-        return
-    end
-
-    if HasActiveUnannouncedWinners() and itemLink ~= rollState.currentItemLink then
-        pendingItemLinkToSet = itemLink
-        StaticPopup_Show("RTROLLMANAGER_ACTIVE_WINNER_ITEM_WARNING")
-        return
-    end
-
-    SetSelectedItemInternal(itemLink)
-end
-
-local function ResetCurrentRollSession(clearSelectedItemToo)
+ResetCurrentRollSession = function(clearSelectedItemToo)
     wipe(rollState.rollEntries)
     wipe(rollState.currentWinnerNames)
 
@@ -626,8 +608,42 @@ local function ResetCurrentRollSession(clearSelectedItemToo)
     rollState.rollHistoryViewIndex = 0
 
     if clearSelectedItemToo then
-        ClearSelectedItem()
+        rollState.currentItemLink = nil
+        rollState.currentItemName = nil
+        rollState.currentItemTexture = nil
+
+        if uiRefs.itemEditBox then
+            uiRefs.itemEditBox:SetText("")
+            uiRefs.itemEditBox:ClearFocus()
+        end
+
+        if uiRefs.itemIcon then
+            uiRefs.itemIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+        end
     end
+
+    if uiRefs.winnerCountButton then
+        uiRefs.winnerCountButton:SetText("1")
+    end
+
+    if uiRefs.winnerCountEditBox then
+        uiRefs.winnerCountEditBox:SetText("1")
+        uiRefs.winnerCountEditBox:ClearFocus()
+    end
+end
+
+local function SetSelectedItem(itemLink)
+    if not itemLink or itemLink == "" then
+        return
+    end
+
+    if HasActiveUnannouncedWinners() and itemLink ~= rollState.currentItemLink then
+        pendingItemLinkToSet = itemLink
+        StaticPopup_Show("RTROLLMANAGER_ACTIVE_WINNER_ITEM_WARNING")
+        return
+    end
+
+    SetSelectedItemInternal(itemLink)
 end
 
 local function BuildRollSnapshot()
@@ -776,6 +792,8 @@ local function AnnounceWinners()
     end
 
     Announce("Winners for " .. rollState.currentItemLink .. ": " .. table.concat(parts, ", "))
+    rollState.currentSessionAnnounced = true
+
     AddWinnersToHistory()
     SaveRollSnapshot()
     ApplyWinnerMarks()
@@ -871,36 +889,6 @@ local function BuildCountdownAnnounceMap(durationValue)
     return announceMap
 end
 
-function HasActiveUnannouncedWinners()
-    if not IsViewingCurrentRollPage() then
-        return false
-    end
-
-    if rollState.isCountdownActive then
-        return false
-    end
-
-    if rollState.currentSessionAnnounced then
-        return false
-    end
-
-    if not rollState.currentItemLink or rollState.currentItemLink == "" then
-        return false
-    end
-
-    if #rollState.rollEntries == 0 then
-        return false
-    end
-
-    if #rollState.currentWinnerNames == 0 then
-        return false
-    end
-
-    return true
-end
-
-local pendingItemLinkToSet = nil
-
 local function UpdateCountdown()
     if not rollState.isCountdownActive then
         return
@@ -952,20 +940,6 @@ local function StartRollSessionInternal(rollType)
 
     Announce(BuildRollStartedMessage())
 end
-
-StaticPopupDialogs["RTROLLMANAGER_ACTIVE_WINNER_WARNING"] = {
-    text = "There is still an active winner for the current roll.\nStarting a new roll will clear the current roll results.\n\nDo you want to continue?",
-    button1 = YES,
-    button2 = NO,
-    OnAccept = function(self, rollType)
-        StartRollSessionInternal(rollType)
-        RefreshRollUI()
-    end,
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3
-}
 
 local function StartRollSession(rollType)
     EnsureSavedVariables()
@@ -1035,7 +1009,7 @@ local function CanChangeSelectedItem()
     return true
 end
 
-local function TryInsertItemLink(linkValue)
+local function IsLinkInsertEligible(linkValue)
     if not uiRefs.itemEditBox then
         return false
     end
@@ -1056,11 +1030,30 @@ local function TryInsertItemLink(linkValue)
         return false
     end
 
-    SetSelectedItem(linkValue)
-    uiRefs.itemEditBox:ClearFocus()
-    RefreshRollUI()
-
     return true
+end
+
+local function TryHandleRollManagerInsertLink(linkValue)
+    if not IsLinkInsertEligible(linkValue) then
+        return false
+    end
+
+    SetSelectedItem(linkValue)
+
+    if uiRefs.itemEditBox then
+        uiRefs.itemEditBox:ClearFocus()
+    end
+
+    RefreshRollUI()
+    return true
+end
+
+local function CallOriginalInsertLink(linkValue)
+    if type(originalChatEdit_InsertLink) == "function" then
+        return originalChatEdit_InsertLink(linkValue)
+    end
+
+    return false
 end
 
 local function InstallInsertLinkHook()
@@ -1068,18 +1061,15 @@ local function InstallInsertLinkHook()
         return
     end
 
+    originalChatEdit_InsertLink = ChatEdit_InsertLink
     isInsertLinkHookInstalled = true
 
     ChatEdit_InsertLink = function(linkValue)
-        if TryInsertItemLink(linkValue) then
+        if TryHandleRollManagerInsertLink(linkValue) then
             return true
         end
 
-        if originalChatEdit_InsertLink then
-            return originalChatEdit_InsertLink(linkValue)
-        end
-
-        return false
+        return CallOriginalInsertLink(linkValue)
     end
 end
 
@@ -1601,8 +1591,8 @@ end
 RefreshActionButtons = function()
     local actionState = GetRollActionState()
 
-    SetButtonEnabled(uiRefs.msButton, actionState.hasSelectedItem)
-    SetButtonEnabled(uiRefs.osButton, actionState.hasSelectedItem)
+    SetButtonEnabled(uiRefs.msButton, actionState.hasSelectedItem and not rollState.isCountdownActive)
+    SetButtonEnabled(uiRefs.osButton, actionState.hasSelectedItem and not rollState.isCountdownActive)
     SetButtonEnabled(uiRefs.finishEarlyButton, actionState.canFinishEarly)
     SetButtonEnabled(uiRefs.announceWinnersButton, actionState.canAnnounceWinners)
     SetButtonEnabled(uiRefs.msChangesToggleButton, true)
@@ -1647,6 +1637,10 @@ end
 
 local function ShowWinnerCountEditBox()
     if not uiRefs.winnerCountEditBox or not uiRefs.winnerCountBg or not uiRefs.winnerCountButton then
+        return
+    end
+
+    if rollState.isCountdownActive then
         return
     end
 
@@ -2042,8 +2036,6 @@ local function CreateRollLogSection(parent, skinModule)
     scrollChild:SetSize(1, 1)
     scrollFrame:SetScrollChild(scrollChild)
 
-    local rollText = nil
-
     uiRefs.logLabel = logLabel
     uiRefs.rollHeaderLinkButton = rollHeaderLinkButton
     uiRefs.rollHeaderLinkText = rollHeaderLinkText
@@ -2052,7 +2044,6 @@ local function CreateRollLogSection(parent, skinModule)
     uiRefs.rightHistoryButton = rightHistoryButton
     uiRefs.rollScrollFrame = scrollFrame
     uiRefs.rollScrollChild = scrollChild
-    uiRefs.rollText = rollText
 
     rollHeaderLinkButton:SetScript("OnEnter", function(self)
         local displayData = GetDisplayedRollData()
@@ -2273,6 +2264,68 @@ local function CreateFooterButtons(parent, skinModule, onClose)
     end)
 end
 
+local function RegisterStaticPopups()
+    StaticPopupDialogs["RTROLLMANAGER_ACTIVE_WINNER_ITEM_WARNING"] = {
+        text = "There is still an active winner for the current roll.\nChanging the selected item will clear the current roll results.\n\nDo you want to continue?",
+        button1 = YES,
+        button2 = NO,
+        OnAccept = function()
+            ResetCurrentRollSession(false)
+
+            if pendingItemLinkToSet and pendingItemLinkToSet ~= "" then
+                SetSelectedItemInternal(pendingItemLinkToSet)
+            else
+                rollState.currentItemLink = nil
+                rollState.currentItemName = nil
+                rollState.currentItemTexture = nil
+                rollState.currentWinnerCount = 1
+
+                if uiRefs.itemEditBox then
+                    uiRefs.itemEditBox:SetText("")
+                    uiRefs.itemEditBox:ClearFocus()
+                end
+
+                if uiRefs.itemIcon then
+                    uiRefs.itemIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+                end
+
+                if uiRefs.winnerCountButton then
+                    uiRefs.winnerCountButton:SetText("1")
+                end
+
+                if uiRefs.winnerCountEditBox then
+                    uiRefs.winnerCountEditBox:SetText("1")
+                end
+            end
+
+            pendingItemLinkToSet = nil
+            RefreshRollUI()
+        end,
+        OnCancel = function()
+            pendingItemLinkToSet = nil
+            RefreshRollUI()
+        end,
+        timeout = 0,
+        whileDead = true,
+        hideOnEscape = true,
+        preferredIndex = 3
+    }
+
+    StaticPopupDialogs["RTROLLMANAGER_ACTIVE_WINNER_WARNING"] = {
+        text = "There is still an active winner for the current roll.\nStarting a new roll will clear the current roll results.\n\nDo you want to continue?",
+        button1 = YES,
+        button2 = NO,
+        OnAccept = function(self, rollType)
+            StartRollSessionInternal(rollType)
+            RefreshRollUI()
+        end,
+        timeout = 0,
+        whileDead = true,
+        hideOnEscape = true,
+        preferredIndex = 3
+    }
+end
+
 SLASH_RTROLLRESET1 = "/rtrollreset"
 SlashCmdList["RTROLLRESET"] = function()
     ResetCurrentRollSession(true)
@@ -2344,6 +2397,8 @@ loader:SetScript("OnEvent", function(self, event, arg1)
 
     EnsureSavedVariables()
     rollState.countdownDuration = tonumber(RTRollManagerSave.countdownDuration) or 20
+
+    RegisterStaticPopups()
 
     if RefreshStatusOverlay then
         RefreshStatusOverlay()
