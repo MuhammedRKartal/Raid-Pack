@@ -4,7 +4,7 @@ local addonName, addonTable = ...
 local MAIN_FRAME_NAME = "RTMainFrame"
 local MAIN_FRAME_WIDTH = 880
 local MAIN_FRAME_HEIGHT = 600
-local TAB_SPACING = 130
+local TAB_SPACING = 95
 
 local STATUS_OVERLAY_NAME = "RTStatusOverlayFrame"
 local STATUS_OVERLAY_WIDTH = 180
@@ -32,6 +32,10 @@ local TAB_DEFINITIONS = {
     {
         name = "Roll Manager",
         creator = CreateRollManagerTabContent
+    },
+    {
+        name = "Auto Response",
+        creator = CreateAutoResponseTabContent
     }
 }
 
@@ -177,8 +181,7 @@ local function ApplySkin()
         return
     end
 
-    SkinMainFrameWithElvUIIfAvailable(mainFrame, mainFrame._closeX,     unpack(tabButtons)
-)
+    SkinMainFrameWithElvUIIfAvailable(mainFrame, mainFrame._closeX, unpack(tabButtons))
 end
 
 local function CreateMainFrameIfNeeded()
