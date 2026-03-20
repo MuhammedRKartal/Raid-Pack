@@ -3,63 +3,93 @@
 local addonName = ...
 local addonTable = select(2, ...)
 
-local isAutoResponseEnabled = false
-local defaultResponseThrottleBySender = {}
+------------------------------------------------------------
+-- STATE / REFS / CONSTANTS
+------------------------------------------------------------
 
-local presetDropdownButton = nil
-local presetDropdownText = nil
-local renamePresetBtn = nil
-local renamePresetBG = nil
-local renamePresetEditBox = nil
-local deletePresetBtn = nil
+local STATE = {
+    isAutoResponseEnabled = false,
+    selectedPresetName = nil,
+    selectedCommandRow = nil,
+    defaultResponseSaveResetAt = 0,
+    presetTransferMode = nil,
+    defaultResponseThrottleBySender = {},
+}
 
-local defaultResponseLabel = nil
-local defaultResponseEditBox = nil
-local defaultResponseCharCountText = nil
-local defaultResponseSaveBtn = nil
-local defaultResponseSaveResetAt = 0
+local UI = {
+    root = nil,
 
-local addCommandBtn = nil
-local commandScrollFrame = nil
-local commandContentFrame = nil
-local commandRows = {}
-local commandListButtons = {}
+    presetDropdownButton = nil,
+    presetDropdownText = nil,
+    renamePresetBtn = nil,
+    renamePresetBG = nil,
+    renamePresetEditBox = nil,
+    deletePresetBtn = nil,
+    importPresetBtn = nil,
+    exportPresetBtn = nil,
 
-local commandDetailPanel = nil
-local commandDetailEmptyText = nil
-local commandDetailCommandLabel = nil
-local commandDetailCommandEditBG = nil
-local commandDetailCommandEditBox = nil
-local commandDetailResponseLabel = nil
-local commandDetailResponseBG = nil
-local commandDetailResponseEditBox = nil
-local commandDetailSaveBtn = nil
-local commandDetailDeleteBtn = nil
-local commandDetailStatusText = nil
+    presetTransferFrame = nil,
+    presetTransferTitleText = nil,
+    presetTransferScrollFrame = nil,
+    presetTransferEditBox = nil,
+    presetTransferConfirmBtn = nil,
+    presetTransferCancelBtn = nil,
+    presetTransferMeasureText = nil,
+    presetTransferStatusText = nil,
 
-local enableBtn = nil
+    defaultResponseLabel = nil,
+    defaultResponseEditBox = nil,
+    defaultResponseCharCountText = nil,
+    defaultResponseSaveBtn = nil,
 
-local selectedPresetName = nil
-local selectedCommandRow = nil
+    addCommandBtn = nil,
+    commandScrollFrame = nil,
+    commandContentFrame = nil,
+    commandListButtons = {},
 
-local CREATE_NEW_PRESET_LABEL = "Create New"
-local CREATE_NEW_PRESET_BASE_NAME = "New Preset"
-local DEFAULT_PRESET_NAME = "Weakauras Center"
+    commandDetailPanel = nil,
+    commandDetailEmptyText = nil,
+    commandDetailCommandLabel = nil,
+    commandDetailCommandEditBG = nil,
+    commandDetailCommandEditBox = nil,
+    commandDetailResponseLabel = nil,
+    commandDetailResponseBG = nil,
+    commandDetailResponseEditBox = nil,
+    commandDetailSaveBtn = nil,
+    commandDetailDeleteBtn = nil,
+    commandDetailStatusText = nil,
 
-local PRESET_NAME_MAX_LENGTH = 21
-local COMMAND_NAME_MAX_LENGTH = 12
-local RESPONSE_MAX_LENGTH = 255
-local CHAT_MESSAGE_MAX_LENGTH = 255
-local DEFAULT_RESPONSE_COOLDOWN_SECONDS = 10
+    enableBtn = nil,
+    closeBtn = nil,
+}
 
-local HELP_COMMAND_DISPLAY_TEXT = "!help & !commands"
-local HELP_COMMAND_PRIMARY = "!help"
-local HELP_COMMAND_SECONDARY = "!commands"
-local HELP_COMMAND_AUTO_RESPONSE = "Shows the full command list."
-local COMMAND_HELP_GUIDE_MESSAGE = "!help or !commands to see the full command list."
+local DATA = {
+    commandRows = {},
+}
 
-local AUTO_RESPONSE_PRESET_DELETE_POPUP = addonName .. "AutoResponsePresetDeletePopup"
-local AUTO_RESPONSE_COMMAND_DELETE_POPUP = addonName .. "AutoResponseCommandDeletePopup"
+local CONST = {
+    CREATE_NEW_PRESET_LABEL = "Create New",
+    CREATE_NEW_PRESET_BASE_NAME = "New Preset",
+    DEFAULT_PRESET_NAME = "Weakauras Center",
+
+    PRESET_NAME_MAX_LENGTH = 21,
+    COMMAND_NAME_MAX_LENGTH = 12,
+    RESPONSE_MAX_LENGTH = 255,
+    CHAT_MESSAGE_MAX_LENGTH = 255,
+    DEFAULT_RESPONSE_COOLDOWN_SECONDS = 10,
+
+    HELP_COMMAND_DISPLAY_TEXT = "!help & !commands",
+    HELP_COMMAND_PRIMARY = "!help",
+    HELP_COMMAND_SECONDARY = "!commands",
+    HELP_COMMAND_AUTO_RESPONSE = "Shows the full command list.",
+    COMMAND_HELP_GUIDE_MESSAGE = "!help or !commands to see the full command list.",
+
+    PRESET_TRANSFER_EXPORT_TITLE = "Export Preset",
+    PRESET_TRANSFER_IMPORT_TITLE = "Import Preset",
+}
+
+CONST.AUTO_RESPONSE_PRESET_DELETE_POPUP = addonName .. "AutoResponsePresetDeletePopup"
+CONST.AUTO_RESPONSE_COMMAND_DELETE_POPUP = addonName .. "AutoResponseCommandDeletePopup"
 
 local eventFrame = CreateFrame("Frame")
 local loader = CreateFrame("Frame")
@@ -98,9 +128,13 @@ local SYSTEM_HELP_ROW = {
     isSystemCommand = true,
     isDeleted = false,
     hasDuplicate = false,
-    command = HELP_COMMAND_DISPLAY_TEXT,
-    response = HELP_COMMAND_AUTO_RESPONSE
+    command = CONST.HELP_COMMAND_DISPLAY_TEXT,
+    response = CONST.HELP_COMMAND_AUTO_RESPONSE
 }
+
+------------------------------------------------------------
+-- TEXT HELPERS
+------------------------------------------------------------
 
 local function TrimText(text)
     local result = text or ""
@@ -133,24 +167,36 @@ end
 
 local function IsReservedHelpAlias(text)
     local normalizedText = NormalizeCommandText(text)
-    if normalizedText == NormalizeCommandText(HELP_COMMAND_PRIMARY) then
+
+    if normalizedText == NormalizeCommandText(CONST.HELP_COMMAND_PRIMARY) then
         return true
     end
-    if normalizedText == NormalizeCommandText(HELP_COMMAND_SECONDARY) then
+
+    if normalizedText == NormalizeCommandText(CONST.HELP_COMMAND_SECONDARY) then
         return true
     end
-    if normalizedText == NormalizeCommandText(HELP_COMMAND_DISPLAY_TEXT) then
+
+    if normalizedText == NormalizeCommandText(CONST.HELP_COMMAND_DISPLAY_TEXT) then
         return true
     end
+
     return false
 end
 
 local function SanitizeCommandText(text)
     local result = tostring(text or "")
     result = RemoveAllSpaces(result)
-    result = LimitTextLength(result, COMMAND_NAME_MAX_LENGTH)
+    result = LimitTextLength(result, CONST.COMMAND_NAME_MAX_LENGTH)
     return result
 end
+
+local function EscapeLuaString(text)
+    return string.format("%q", tostring(text or ""))
+end
+
+------------------------------------------------------------
+-- UI HELPERS
+------------------------------------------------------------
 
 local function ApplyPixelStyle(frame, width, height)
     frame:SetBackdrop({
@@ -163,493 +209,6 @@ local function ApplyPixelStyle(frame, width, height)
 
     if width and height then
         frame:SetSize(width, height)
-    end
-end
-
-local function CopyCommandEntry(source)
-    local result = {
-        command = "",
-        response = "",
-        isDeleted = false,
-        hasDuplicate = false,
-        isSystemCommand = false
-    }
-
-    if source then
-        result.command = tostring(source.command or "")
-        result.response = tostring(source.response or "")
-    end
-
-    result.command = SanitizeCommandText(result.command)
-    result.response = LimitTextLength(result.response, RESPONSE_MAX_LENGTH)
-
-    if IsReservedHelpAlias(result.command) then
-        result.command = ""
-        result.response = ""
-    end
-
-    return result
-end
-
-local function CopyPresetData(source)
-    local result = {
-        defaultResponse = "",
-        commands = {}
-    }
-
-    if source then
-        result.defaultResponse = tostring(source.defaultResponse or "")
-
-        if type(source.commands) == "table" then
-            local index = 1
-            while source.commands[index] do
-                local copiedEntry = CopyCommandEntry(source.commands[index])
-                if copiedEntry.command ~= "" or copiedEntry.response ~= "" then
-                    result.commands[#result.commands + 1] = copiedEntry
-                end
-                index = index + 1
-            end
-        end
-    end
-
-    result.defaultResponse = LimitTextLength(result.defaultResponse, RESPONSE_MAX_LENGTH)
-
-    return result
-end
-
-local function EnsureSavedVariables()
-    if type(RTAutoResponseSave) ~= "table" then
-        RTAutoResponseSave = {}
-    end
-
-    if type(RTAutoResponseSave.presets) ~= "table" then
-        RTAutoResponseSave.presets = {}
-    end
-
-    if type(RTAutoResponseSave.activePresetName) ~= "string" then
-        RTAutoResponseSave.activePresetName = DEFAULT_PRESET_NAME
-    end
-
-    if RTAutoResponseSave.enabled == nil then
-        RTAutoResponseSave.enabled = false
-    else
-        RTAutoResponseSave.enabled = RTAutoResponseSave.enabled and true or false
-    end
-
-    for presetName, presetData in pairs(RTAutoResponseSave.presets) do
-        if presetName ~= DEFAULT_PRESET_NAME then
-            RTAutoResponseSave.presets[presetName] = CopyPresetData(presetData)
-        end
-    end
-
-    RTAutoResponseSave.presets[DEFAULT_PRESET_NAME] = CopyPresetData(DEFAULT_PRESET_TEMPLATE)
-
-    if not RTAutoResponseSave.activePresetName
-        or RTAutoResponseSave.activePresetName == ""
-        or not RTAutoResponseSave.presets[RTAutoResponseSave.activePresetName] then
-        RTAutoResponseSave.activePresetName = DEFAULT_PRESET_NAME
-    end
-end
-
-local function GetSelectedPresetName()
-    EnsureSavedVariables()
-
-    local presetName = RTAutoResponseSave.activePresetName
-    if type(presetName) ~= "string" or presetName == "" then
-        return DEFAULT_PRESET_NAME
-    end
-
-    if not RTAutoResponseSave.presets[presetName] then
-        return DEFAULT_PRESET_NAME
-    end
-
-    return presetName
-end
-
-local function SetSelectedPresetName(presetName)
-    selectedPresetName = presetName
-
-    if presetName
-        and presetName ~= ""
-        and presetName ~= CREATE_NEW_PRESET_LABEL
-        and RTAutoResponseSave
-        and RTAutoResponseSave.presets
-        and RTAutoResponseSave.presets[presetName] then
-        RTAutoResponseSave.activePresetName = presetName
-    end
-
-    if presetDropdownText then
-        if presetName and presetName ~= "" then
-            presetDropdownText:SetText(presetName)
-        else
-            presetDropdownText:SetText("Select Preset")
-        end
-    end
-end
-
-local function IsProtectedPreset(presetName)
-    if presetName == DEFAULT_PRESET_NAME then
-        return true
-    end
-    return false
-end
-
-local function IsDefaultPresetSelected()
-    local presetName = GetSelectedPresetName()
-    return presetName == DEFAULT_PRESET_NAME
-end
-
-local function IsCurrentPresetEditable()
-    return not IsDefaultPresetSelected()
-end
-
-local function IsRenameBlocked(presetName)
-    if not presetName or presetName == "" then
-        return true
-    end
-
-    if presetName == CREATE_NEW_PRESET_LABEL then
-        return true
-    end
-
-    if IsProtectedPreset(presetName) then
-        return true
-    end
-
-    if not RTAutoResponseSave.presets[presetName] then
-        return true
-    end
-
-    return false
-end
-
-local function GetSortedPresetNames()
-    EnsureSavedVariables()
-
-    local presetNames = {}
-
-    for presetName in pairs(RTAutoResponseSave.presets) do
-        presetNames[#presetNames + 1] = presetName
-    end
-
-    table.sort(presetNames, function(leftValue, rightValue)
-        if leftValue == DEFAULT_PRESET_NAME then
-            return true
-        end
-
-        if rightValue == DEFAULT_PRESET_NAME then
-            return false
-        end
-
-        return string.lower(leftValue) < string.lower(rightValue)
-    end)
-
-    local result = { CREATE_NEW_PRESET_LABEL }
-    local index = 1
-    while index <= #presetNames do
-        result[#result + 1] = presetNames[index]
-        index = index + 1
-    end
-
-    return result
-end
-
-local function GetUniquePresetName(baseName)
-    EnsureSavedVariables()
-
-    local trimmedBaseName = LimitTextLength(TrimText(baseName or ""), PRESET_NAME_MAX_LENGTH)
-
-    if trimmedBaseName == "" then
-        return ""
-    end
-
-    if not RTAutoResponseSave.presets[trimmedBaseName] then
-        return trimmedBaseName
-    end
-
-    local copySuffix = " (copy)"
-    local indexedPrefix = " (copy "
-
-    local candidateName = LimitTextLength(trimmedBaseName, PRESET_NAME_MAX_LENGTH - string.len(copySuffix)) .. copySuffix
-    if not RTAutoResponseSave.presets[candidateName] then
-        return candidateName
-    end
-
-    local copyIndex = 2
-    while true do
-        local suffix = indexedPrefix .. tostring(copyIndex) .. ")"
-        local maxBaseLength = PRESET_NAME_MAX_LENGTH - string.len(suffix)
-        local basePart = trimmedBaseName
-
-        if maxBaseLength < 1 then
-            maxBaseLength = 1
-        end
-
-        basePart = LimitTextLength(basePart, maxBaseLength)
-        candidateName = basePart .. suffix
-
-        if not RTAutoResponseSave.presets[candidateName] then
-            return candidateName
-        end
-
-        copyIndex = copyIndex + 1
-    end
-end
-
-local function GetNextNewPresetName()
-    EnsureSavedVariables()
-
-    local newIndex = 1
-
-    while true do
-        local candidateName = CREATE_NEW_PRESET_BASE_NAME .. " (" .. tostring(newIndex) .. ")"
-
-        if string.len(candidateName) > PRESET_NAME_MAX_LENGTH then
-            candidateName = LimitTextLength(candidateName, PRESET_NAME_MAX_LENGTH)
-        end
-
-        if not RTAutoResponseSave.presets[candidateName] then
-            return candidateName
-        end
-
-        newIndex = newIndex + 1
-    end
-end
-
-local function GetActivePresetData()
-    EnsureSavedVariables()
-
-    local presetName = RTAutoResponseSave.activePresetName
-    if not presetName or presetName == "" then
-        return nil
-    end
-
-    if presetName == CREATE_NEW_PRESET_LABEL then
-        return nil
-    end
-
-    return RTAutoResponseSave.presets[presetName]
-end
-
-local function RefreshPresetActionButtons()
-    local presetName = selectedPresetName
-    local canRenameOrDelete = false
-
-    EnsureSavedVariables()
-
-    if presetName and presetName ~= "" and presetName ~= CREATE_NEW_PRESET_LABEL and RTAutoResponseSave.presets[presetName] then
-        if not IsProtectedPreset(presetName) then
-            canRenameOrDelete = true
-        end
-    end
-
-    if renamePresetBtn then
-        if canRenameOrDelete then
-            renamePresetBtn:Enable()
-        else
-            renamePresetBtn:Disable()
-        end
-    end
-
-    if deletePresetBtn then
-        if canRenameOrDelete then
-            deletePresetBtn:Enable()
-        else
-            deletePresetBtn:Disable()
-        end
-    end
-end
-
-local function StopRenameMode()
-    if presetDropdownButton then
-        presetDropdownButton:Show()
-    end
-
-    if renamePresetBG then
-        renamePresetBG:Hide()
-    end
-
-    if renamePresetEditBox then
-        renamePresetEditBox:Hide()
-        renamePresetEditBox:ClearFocus()
-    end
-
-    if renamePresetBtn then
-        renamePresetBtn:SetText("Rename")
-        renamePresetBtn.isRenaming = false
-    end
-end
-
-local function StartRenameMode()
-    EnsureSavedVariables()
-
-    local presetName = GetSelectedPresetName()
-    if IsRenameBlocked(presetName) then
-        return
-    end
-
-    if presetDropdownButton then
-        presetDropdownButton:Hide()
-    end
-
-    if renamePresetBG then
-        renamePresetBG:Show()
-    end
-
-    if renamePresetEditBox then
-        renamePresetEditBox:Show()
-        renamePresetEditBox:SetText(presetName)
-        renamePresetEditBox:SetFocus()
-        renamePresetEditBox:HighlightText()
-    end
-
-    if renamePresetBtn then
-        renamePresetBtn:SetText("|cff00ff00Save|r")
-        renamePresetBtn.isRenaming = true
-    end
-end
-
-local function RenameSelectedPreset(newName)
-    EnsureSavedVariables()
-
-    local oldName = GetSelectedPresetName()
-    if IsRenameBlocked(oldName) then
-        StopRenameMode()
-        return
-    end
-
-    local finalName = LimitTextLength(TrimText(newName or ""), PRESET_NAME_MAX_LENGTH)
-    if finalName == "" then
-        return
-    end
-
-    if finalName == oldName then
-        StopRenameMode()
-        return
-    end
-
-    if RTAutoResponseSave.presets[finalName] then
-        return
-    end
-
-    RTAutoResponseSave.presets[finalName] = CopyPresetData(RTAutoResponseSave.presets[oldName])
-    RTAutoResponseSave.presets[oldName] = nil
-
-    SetSelectedPresetName(finalName)
-    StopRenameMode()
-    RefreshPresetActionButtons()
-end
-
-local function ClearCommandRows()
-    wipe(commandRows)
-    selectedCommandRow = nil
-end
-
-local function GetVisibleCommandRows()
-    local visibleRows = {}
-    local index = #commandRows
-
-    while index >= 1 do
-        local row = commandRows[index]
-        if row and not row.isDeleted then
-            visibleRows[#visibleRows + 1] = row
-        end
-        index = index - 1
-    end
-
-    visibleRows[#visibleRows + 1] = SYSTEM_HELP_ROW
-
-    return visibleRows
-end
-
-local function DoesCommandExist(commandText, ignoredRow)
-    local normalizedTarget = NormalizeCommandText(commandText)
-    local index = 1
-
-    if normalizedTarget == "" then
-        return false
-    end
-
-    if IsReservedHelpAlias(normalizedTarget) then
-        return true
-    end
-
-    while index <= #commandRows do
-        local row = commandRows[index]
-        if row and not row.isDeleted and row ~= ignoredRow and not row.isSystemCommand then
-            local normalizedExisting = NormalizeCommandText(row.command or "")
-            if normalizedExisting ~= "" and normalizedExisting == normalizedTarget then
-                return true
-            end
-        end
-        index = index + 1
-    end
-
-    return false
-end
-
-local function RefreshCommandDuplicateState(row)
-    if not row or row.isSystemCommand then
-        return
-    end
-
-    row.hasDuplicate = false
-
-    if TrimText(row.command or "") == "" then
-        return
-    end
-
-    if IsReservedHelpAlias(row.command or "") then
-        row.hasDuplicate = true
-        return
-    end
-
-    row.hasDuplicate = DoesCommandExist(row.command or "", row)
-end
-
-local function RefreshAllDuplicateStates()
-    local index = 1
-    while index <= #commandRows do
-        local row = commandRows[index]
-        if row and not row.isDeleted then
-            RefreshCommandDuplicateState(row)
-        end
-        index = index + 1
-    end
-end
-
-local function SaveAllCommandRowsToPreset()
-    local presetData = GetActivePresetData()
-    if not presetData then
-        return
-    end
-
-    if not IsCurrentPresetEditable() then
-        return
-    end
-
-    presetData.commands = {}
-
-    local saveIndex = 1
-    local rowIndex = 1
-
-    while rowIndex <= #commandRows do
-        local row = commandRows[rowIndex]
-        if row and not row.isDeleted and not row.isSystemCommand then
-            local sanitizedCommand = SanitizeCommandText(row.command or "")
-            local limitedResponse = LimitTextLength(row.response or "", RESPONSE_MAX_LENGTH)
-
-            if sanitizedCommand ~= "" or limitedResponse ~= "" then
-                if not IsReservedHelpAlias(sanitizedCommand) then
-                    presetData.commands[saveIndex] = {
-                        command = sanitizedCommand,
-                        response = limitedResponse
-                    }
-                    saveIndex = saveIndex + 1
-                end
-            end
-        end
-        rowIndex = rowIndex + 1
     end
 end
 
@@ -687,21 +246,588 @@ local function SetEditBoxInteractionEnabled(editBox, isEnabled)
     end
 end
 
-local function RefreshAddCommandButtonState()
-    if not addCommandBtn then
+local function SetEditBoxReadOnly(editBox, isReadOnly)
+    if not editBox then
+        return
+    end
+
+    editBox.isReadOnly = isReadOnly and true or false
+    editBox.lastReadOnlyText = tostring(editBox:GetText() or "")
+
+    if editBox.EnableKeyboard then
+        editBox:EnableKeyboard(true)
+    end
+
+    if editBox.EnableMouse then
+        editBox:EnableMouse(true)
+    end
+
+    if editBox.SetTextColor then
+        editBox:SetTextColor(1, 1, 1)
+    end
+end
+
+local function TrySkinButton(button)
+    if not button then
+        return
+    end
+
+    if TryGetElvUISkinModule then
+        local eValue, sValue = TryGetElvUISkinModule()
+        if eValue and sValue and not button.isSkinned then
+            sValue:HandleButton(button)
+            button.isSkinned = true
+        end
+    end
+end
+
+------------------------------------------------------------
+-- DATA COPY / SAVE HELPERS
+------------------------------------------------------------
+
+local function CopyCommandEntry(source)
+    local result = {
+        command = "",
+        response = "",
+        isDeleted = false,
+        hasDuplicate = false,
+        isSystemCommand = false
+    }
+
+    if source then
+        result.command = tostring(source.command or "")
+        result.response = tostring(source.response or "")
+    end
+
+    result.command = SanitizeCommandText(result.command)
+    result.response = LimitTextLength(result.response, CONST.RESPONSE_MAX_LENGTH)
+
+    if IsReservedHelpAlias(result.command) then
+        result.command = ""
+        result.response = ""
+    end
+
+    return result
+end
+
+local function CopyPresetData(source)
+    local result = {
+        defaultResponse = "",
+        commands = {}
+    }
+
+    if source then
+        result.defaultResponse = tostring(source.defaultResponse or "")
+
+        if type(source.commands) == "table" then
+            local index = 1
+            while source.commands[index] do
+                local copiedEntry = CopyCommandEntry(source.commands[index])
+                if copiedEntry.command ~= "" or copiedEntry.response ~= "" then
+                    result.commands[#result.commands + 1] = copiedEntry
+                end
+                index = index + 1
+            end
+        end
+    end
+
+    result.defaultResponse = LimitTextLength(result.defaultResponse, CONST.RESPONSE_MAX_LENGTH)
+
+    return result
+end
+
+local function EnsureSavedVariables()
+    if type(RTAutoResponseSave) ~= "table" then
+        RTAutoResponseSave = {}
+    end
+
+    if type(RTAutoResponseSave.presets) ~= "table" then
+        RTAutoResponseSave.presets = {}
+    end
+
+    if type(RTAutoResponseSave.activePresetName) ~= "string" then
+        RTAutoResponseSave.activePresetName = CONST.DEFAULT_PRESET_NAME
+    end
+
+    if RTAutoResponseSave.enabled == nil then
+        RTAutoResponseSave.enabled = false
+    else
+        RTAutoResponseSave.enabled = RTAutoResponseSave.enabled and true or false
+    end
+
+    for presetName, presetData in pairs(RTAutoResponseSave.presets) do
+        if presetName ~= CONST.DEFAULT_PRESET_NAME then
+            RTAutoResponseSave.presets[presetName] = CopyPresetData(presetData)
+        end
+    end
+
+    RTAutoResponseSave.presets[CONST.DEFAULT_PRESET_NAME] = CopyPresetData(DEFAULT_PRESET_TEMPLATE)
+
+    if not RTAutoResponseSave.activePresetName
+        or RTAutoResponseSave.activePresetName == ""
+        or not RTAutoResponseSave.presets[RTAutoResponseSave.activePresetName] then
+        RTAutoResponseSave.activePresetName = CONST.DEFAULT_PRESET_NAME
+    end
+end
+
+------------------------------------------------------------
+-- PRESET HELPERS
+------------------------------------------------------------
+
+local function GetSelectedPresetName()
+    EnsureSavedVariables()
+
+    local presetName = RTAutoResponseSave.activePresetName
+    if type(presetName) ~= "string" or presetName == "" then
+        return CONST.DEFAULT_PRESET_NAME
+    end
+
+    if not RTAutoResponseSave.presets[presetName] then
+        return CONST.DEFAULT_PRESET_NAME
+    end
+
+    return presetName
+end
+
+local function SetSelectedPresetName(presetName)
+    STATE.selectedPresetName = presetName
+
+    if presetName
+        and presetName ~= ""
+        and presetName ~= CONST.CREATE_NEW_PRESET_LABEL
+        and RTAutoResponseSave
+        and RTAutoResponseSave.presets
+        and RTAutoResponseSave.presets[presetName] then
+        RTAutoResponseSave.activePresetName = presetName
+    end
+
+    if UI.presetDropdownText then
+        if presetName and presetName ~= "" then
+            UI.presetDropdownText:SetText(presetName)
+        else
+            UI.presetDropdownText:SetText("Select Preset")
+        end
+    end
+end
+
+local function IsProtectedPreset(presetName)
+    return presetName == CONST.DEFAULT_PRESET_NAME
+end
+
+local function IsDefaultPresetSelected()
+    return GetSelectedPresetName() == CONST.DEFAULT_PRESET_NAME
+end
+
+local function IsCurrentPresetEditable()
+    return not IsDefaultPresetSelected()
+end
+
+local function IsRenameBlocked(presetName)
+    if not presetName or presetName == "" then
+        return true
+    end
+
+    if presetName == CONST.CREATE_NEW_PRESET_LABEL then
+        return true
+    end
+
+    if IsProtectedPreset(presetName) then
+        return true
+    end
+
+    if not RTAutoResponseSave.presets[presetName] then
+        return true
+    end
+
+    return false
+end
+
+local function GetSortedPresetNames()
+    EnsureSavedVariables()
+
+    local presetNames = {}
+
+    for presetName in pairs(RTAutoResponseSave.presets) do
+        presetNames[#presetNames + 1] = presetName
+    end
+
+    table.sort(presetNames, function(leftValue, rightValue)
+        if leftValue == CONST.DEFAULT_PRESET_NAME then
+            return true
+        end
+
+        if rightValue == CONST.DEFAULT_PRESET_NAME then
+            return false
+        end
+
+        return string.lower(leftValue) < string.lower(rightValue)
+    end)
+
+    local result = { CONST.CREATE_NEW_PRESET_LABEL }
+    local index = 1
+
+    while index <= #presetNames do
+        result[#result + 1] = presetNames[index]
+        index = index + 1
+    end
+
+    return result
+end
+
+local function GetUniquePresetName(baseName)
+    EnsureSavedVariables()
+
+    local trimmedBaseName = LimitTextLength(TrimText(baseName or ""), CONST.PRESET_NAME_MAX_LENGTH)
+
+    if trimmedBaseName == "" then
+        return ""
+    end
+
+    if not RTAutoResponseSave.presets[trimmedBaseName] then
+        return trimmedBaseName
+    end
+
+    local copySuffix = " (copy)"
+    local indexedPrefix = " (copy "
+    local candidateName = LimitTextLength(trimmedBaseName, CONST.PRESET_NAME_MAX_LENGTH - string.len(copySuffix)) .. copySuffix
+
+    if not RTAutoResponseSave.presets[candidateName] then
+        return candidateName
+    end
+
+    local copyIndex = 2
+    while true do
+        local suffix = indexedPrefix .. tostring(copyIndex) .. ")"
+        local maxBaseLength = CONST.PRESET_NAME_MAX_LENGTH - string.len(suffix)
+        local basePart = trimmedBaseName
+
+        if maxBaseLength < 1 then
+            maxBaseLength = 1
+        end
+
+        basePart = LimitTextLength(basePart, maxBaseLength)
+        candidateName = basePart .. suffix
+
+        if not RTAutoResponseSave.presets[candidateName] then
+            return candidateName
+        end
+
+        copyIndex = copyIndex + 1
+    end
+end
+
+local function GetNextNewPresetName()
+    EnsureSavedVariables()
+
+    local newIndex = 1
+
+    while true do
+        local candidateName = CONST.CREATE_NEW_PRESET_BASE_NAME .. " (" .. tostring(newIndex) .. ")"
+
+        if string.len(candidateName) > CONST.PRESET_NAME_MAX_LENGTH then
+            candidateName = LimitTextLength(candidateName, CONST.PRESET_NAME_MAX_LENGTH)
+        end
+
+        if not RTAutoResponseSave.presets[candidateName] then
+            return candidateName
+        end
+
+        newIndex = newIndex + 1
+    end
+end
+
+local function GetActivePresetData()
+    EnsureSavedVariables()
+
+    local presetName = RTAutoResponseSave.activePresetName
+    if not presetName or presetName == "" then
+        return nil
+    end
+
+    if presetName == CONST.CREATE_NEW_PRESET_LABEL then
+        return nil
+    end
+
+    return RTAutoResponseSave.presets[presetName]
+end
+
+------------------------------------------------------------
+-- COMMAND DATA HELPERS
+------------------------------------------------------------
+
+local function ClearCommandRows()
+    wipe(DATA.commandRows)
+    STATE.selectedCommandRow = nil
+end
+
+local function GetVisibleCommandRows()
+    local visibleRows = {}
+    local index = #DATA.commandRows
+
+    while index >= 1 do
+        local row = DATA.commandRows[index]
+        if row and not row.isDeleted then
+            visibleRows[#visibleRows + 1] = row
+        end
+        index = index - 1
+    end
+
+    visibleRows[#visibleRows + 1] = SYSTEM_HELP_ROW
+    return visibleRows
+end
+
+local function DoesCommandExist(commandText, ignoredRow)
+    local normalizedTarget = NormalizeCommandText(commandText)
+    if normalizedTarget == "" then
+        return false
+    end
+
+    if IsReservedHelpAlias(normalizedTarget) then
+        return true
+    end
+
+    local index = 1
+    while index <= #DATA.commandRows do
+        local row = DATA.commandRows[index]
+        if row and not row.isDeleted and row ~= ignoredRow and not row.isSystemCommand then
+            local normalizedExisting = NormalizeCommandText(row.command or "")
+            if normalizedExisting ~= "" and normalizedExisting == normalizedTarget then
+                return true
+            end
+        end
+        index = index + 1
+    end
+
+    return false
+end
+
+local function RefreshCommandDuplicateState(row)
+    if not row or row.isSystemCommand then
+        return
+    end
+
+    row.hasDuplicate = false
+
+    if TrimText(row.command or "") == "" then
+        return
+    end
+
+    if IsReservedHelpAlias(row.command or "") then
+        row.hasDuplicate = true
+        return
+    end
+
+    row.hasDuplicate = DoesCommandExist(row.command or "", row)
+end
+
+local function RefreshAllDuplicateStates()
+    local index = 1
+    while index <= #DATA.commandRows do
+        local row = DATA.commandRows[index]
+        if row and not row.isDeleted then
+            RefreshCommandDuplicateState(row)
+        end
+        index = index + 1
+    end
+end
+
+local function SaveAllCommandRowsToPreset()
+    local presetData = GetActivePresetData()
+    if not presetData then
         return
     end
 
     if not IsCurrentPresetEditable() then
-        addCommandBtn:Disable()
+        return
+    end
+
+    presetData.commands = {}
+
+    local saveIndex = 1
+    local rowIndex = 1
+
+    while rowIndex <= #DATA.commandRows do
+        local row = DATA.commandRows[rowIndex]
+        if row and not row.isDeleted and not row.isSystemCommand then
+            local sanitizedCommand = SanitizeCommandText(row.command or "")
+            local limitedResponse = LimitTextLength(row.response or "", CONST.RESPONSE_MAX_LENGTH)
+
+            if sanitizedCommand ~= "" or limitedResponse ~= "" then
+                if not IsReservedHelpAlias(sanitizedCommand) then
+                    presetData.commands[saveIndex] = {
+                        command = sanitizedCommand,
+                        response = limitedResponse
+                    }
+                    saveIndex = saveIndex + 1
+                end
+            end
+        end
+        rowIndex = rowIndex + 1
+    end
+end
+
+local function CreateCommandRow(commandValue, responseValue)
+    local row = {
+        command = SanitizeCommandText(commandValue or ""),
+        response = LimitTextLength(responseValue or "", CONST.RESPONSE_MAX_LENGTH),
+        isDeleted = false,
+        hasDuplicate = false,
+        isSystemCommand = false
+    }
+
+    if IsReservedHelpAlias(row.command) then
+        row.command = ""
+        row.response = ""
+    end
+
+    DATA.commandRows[#DATA.commandRows + 1] = row
+
+    RefreshAllDuplicateStates()
+    return row
+end
+
+------------------------------------------------------------
+-- UI STATE REFRESH
+------------------------------------------------------------
+
+local function RefreshPresetActionButtons()
+    local presetName = STATE.selectedPresetName
+    local canRenameOrDelete = false
+    local canImportOrExport = false
+
+    EnsureSavedVariables()
+
+    if presetName
+        and presetName ~= ""
+        and presetName ~= CONST.CREATE_NEW_PRESET_LABEL
+        and RTAutoResponseSave.presets[presetName] then
+
+        if not IsProtectedPreset(presetName) then
+            canRenameOrDelete = true
+            canImportOrExport = true
+        end
+    end
+
+    if UI.renamePresetBtn then
+        if canRenameOrDelete then
+            UI.renamePresetBtn:Enable()
+        else
+            UI.renamePresetBtn:Disable()
+        end
+    end
+
+    if UI.deletePresetBtn then
+        if canRenameOrDelete then
+            UI.deletePresetBtn:Enable()
+        else
+            UI.deletePresetBtn:Disable()
+        end
+    end
+
+    if UI.importPresetBtn then
+        if canImportOrExport then
+            UI.importPresetBtn:Enable()
+        else
+            UI.importPresetBtn:Disable()
+        end
+    end
+
+    if UI.exportPresetBtn then
+        if canImportOrExport then
+            UI.exportPresetBtn:Enable()
+        else
+            UI.exportPresetBtn:Disable()
+        end
+    end
+end
+
+local function RefreshEnableButton()
+    if not UI.enableBtn then
+        return
+    end
+
+    if STATE.isAutoResponseEnabled then
+        UI.enableBtn:SetText("|cff00ff00Enabled|r")
+    else
+        UI.enableBtn:SetText("Enable Auto Response")
+    end
+end
+
+local function RefreshDefaultResponseSaveButton()
+    if not UI.defaultResponseSaveBtn then
+        return
+    end
+
+    if not IsCurrentPresetEditable() then
+        UI.defaultResponseSaveBtn:SetText("Save")
+        STATE.defaultResponseSaveResetAt = 0
+        return
+    end
+
+    if STATE.defaultResponseSaveResetAt > 0 and GetTime() < STATE.defaultResponseSaveResetAt then
+        UI.defaultResponseSaveBtn:SetText("|cff00ff00Saved|r")
+    else
+        UI.defaultResponseSaveBtn:SetText("Save")
+        STATE.defaultResponseSaveResetAt = 0
+    end
+end
+
+local function RefreshDefaultResponseInputColor()
+    if not UI.defaultResponseEditBox then
+        return
+    end
+
+    if not IsCurrentPresetEditable() then
+        UI.defaultResponseEditBox:SetTextColor(0.65, 0.65, 0.65)
+        return
+    end
+
+    local presetData = GetActivePresetData()
+    local currentValue = tostring(UI.defaultResponseEditBox:GetText() or "")
+    local savedValue = ""
+
+    if presetData then
+        savedValue = tostring(presetData.defaultResponse or "")
+    end
+
+    if currentValue ~= savedValue then
+        UI.defaultResponseEditBox:SetTextColor(0, 1, 0)
+    else
+        UI.defaultResponseEditBox:SetTextColor(1, 1, 1)
+    end
+end
+
+local function RefreshDefaultResponseControlStates()
+    local isEditable = IsCurrentPresetEditable()
+
+    if UI.defaultResponseEditBox then
+        SetEditBoxInteractionEnabled(UI.defaultResponseEditBox, isEditable)
+    end
+
+    if UI.defaultResponseSaveBtn then
+        if isEditable then
+            UI.defaultResponseSaveBtn:Enable()
+        else
+            UI.defaultResponseSaveBtn:Disable()
+        end
+    end
+end
+
+local function RefreshAddCommandButtonState()
+    if not UI.addCommandBtn then
+        return
+    end
+
+    if not IsCurrentPresetEditable() then
+        UI.addCommandBtn:Disable()
         return
     end
 
     local lastRow = nil
-    local index = #commandRows
+    local index = #DATA.commandRows
 
     while index >= 1 do
-        local row = commandRows[index]
+        local row = DATA.commandRows[index]
         if row and not row.isDeleted and not row.isSystemCommand then
             lastRow = row
             break
@@ -710,7 +836,7 @@ local function RefreshAddCommandButtonState()
     end
 
     if not lastRow then
-        addCommandBtn:Enable()
+        UI.addCommandBtn:Enable()
         return
     end
 
@@ -718,215 +844,99 @@ local function RefreshAddCommandButtonState()
     local responseText = TrimText(lastRow.response or "")
 
     if commandText == "" or responseText == "" then
-        addCommandBtn:Disable()
+        UI.addCommandBtn:Disable()
     else
-        addCommandBtn:Enable()
+        UI.addCommandBtn:Enable()
     end
 end
 
-local function ClearCommandListButtons()
-    local index = 1
+------------------------------------------------------------
+-- RENAME FLOW
+------------------------------------------------------------
 
-    while index <= #commandListButtons do
-        local button = commandListButtons[index]
-        if button then
-            button:Hide()
-            button:ClearAllPoints()
-            button.row = nil
-            button:SetText("")
-            button:SetParent(commandContentFrame)
-        end
-        index = index + 1
+local function StopRenameMode()
+    if UI.presetDropdownButton then
+        UI.presetDropdownButton:Show()
+    end
+
+    if UI.renamePresetBG then
+        UI.renamePresetBG:Hide()
+    end
+
+    if UI.renamePresetEditBox then
+        UI.renamePresetEditBox:Hide()
+        UI.renamePresetEditBox:ClearFocus()
+    end
+
+    if UI.renamePresetBtn then
+        UI.renamePresetBtn:SetText("Rename")
+        UI.renamePresetBtn.isRenaming = false
     end
 end
 
-local function RefreshDefaultResponseSaveButton()
-    if not defaultResponseSaveBtn then
+local function StartRenameMode()
+    EnsureSavedVariables()
+
+    local presetName = GetSelectedPresetName()
+    if IsRenameBlocked(presetName) then
         return
     end
 
-    if not IsCurrentPresetEditable() then
-        defaultResponseSaveBtn:SetText("Save")
-        defaultResponseSaveResetAt = 0
-        return
+    if UI.presetDropdownButton then
+        UI.presetDropdownButton:Hide()
     end
 
-    if defaultResponseSaveResetAt > 0 and GetTime() < defaultResponseSaveResetAt then
-        defaultResponseSaveBtn:SetText("|cff00ff00Saved|r")
-    else
-        defaultResponseSaveBtn:SetText("Save")
-        defaultResponseSaveResetAt = 0
+    if UI.renamePresetBG then
+        UI.renamePresetBG:Show()
+    end
+
+    if UI.renamePresetEditBox then
+        UI.renamePresetEditBox:Show()
+        UI.renamePresetEditBox:SetText(presetName)
+        UI.renamePresetEditBox:SetFocus()
+        UI.renamePresetEditBox:HighlightText()
+    end
+
+    if UI.renamePresetBtn then
+        UI.renamePresetBtn:SetText("|cff00ff00Save|r")
+        UI.renamePresetBtn.isRenaming = true
     end
 end
 
-local function RefreshDefaultResponseInputColor()
-    if not defaultResponseEditBox then
+local function RenameSelectedPreset(newName)
+    EnsureSavedVariables()
+
+    local oldName = GetSelectedPresetName()
+    if IsRenameBlocked(oldName) then
+        StopRenameMode()
         return
     end
 
-    if not IsCurrentPresetEditable() then
-        defaultResponseEditBox:SetTextColor(0.65, 0.65, 0.65)
+    local finalName = LimitTextLength(TrimText(newName or ""), CONST.PRESET_NAME_MAX_LENGTH)
+    if finalName == "" then
         return
     end
 
-    local presetData = GetActivePresetData()
-    local currentValue = tostring(defaultResponseEditBox:GetText() or "")
-    local savedValue = ""
-
-    if presetData then
-        savedValue = tostring(presetData.defaultResponse or "")
+    if finalName == oldName then
+        StopRenameMode()
+        return
     end
 
-    if currentValue ~= savedValue then
-        defaultResponseEditBox:SetTextColor(0, 1, 0)
-    else
-        defaultResponseEditBox:SetTextColor(1, 1, 1)
+    if RTAutoResponseSave.presets[finalName] then
+        return
     end
+
+    RTAutoResponseSave.presets[finalName] = CopyPresetData(RTAutoResponseSave.presets[oldName])
+    RTAutoResponseSave.presets[oldName] = nil
+
+    SetSelectedPresetName(finalName)
+    StopRenameMode()
+    RefreshPresetActionButtons()
 end
 
-local function RefreshDefaultResponseControlStates()
-    local isEditable = IsCurrentPresetEditable()
-
-    if defaultResponseEditBox then
-        SetEditBoxInteractionEnabled(defaultResponseEditBox, isEditable)
-    end
-
-    if defaultResponseSaveBtn then
-        if isEditable then
-            defaultResponseSaveBtn:Enable()
-        else
-            defaultResponseSaveBtn:Disable()
-        end
-    end
-end
-
-local function RefreshCommandDetailInputColors()
-    if not selectedCommandRow or selectedCommandRow.isDeleted then
-        if commandDetailCommandEditBox then
-            commandDetailCommandEditBox:SetTextColor(0.65, 0.65, 0.65)
-        end
-
-        if commandDetailResponseEditBox then
-            commandDetailResponseEditBox:SetTextColor(0.65, 0.65, 0.65)
-        end
-        return
-    end
-
-    if not IsCurrentPresetEditable() then
-        if commandDetailCommandEditBox then
-            if selectedCommandRow.isSystemCommand then
-                commandDetailCommandEditBox:SetTextColor(1, 0.82, 0)
-            else
-                commandDetailCommandEditBox:SetTextColor(0.65, 0.65, 0.65)
-            end
-        end
-
-        if commandDetailResponseEditBox then
-            commandDetailResponseEditBox:SetTextColor(0.65, 0.65, 0.65)
-        end
-        return
-    end
-
-    if selectedCommandRow.isSystemCommand then
-        if commandDetailCommandEditBox then
-            commandDetailCommandEditBox:SetTextColor(1, 0.82, 0)
-        end
-
-        if commandDetailResponseEditBox then
-            commandDetailResponseEditBox:SetTextColor(1, 1, 1)
-        end
-        return
-    end
-
-    local currentCommandText = ""
-    local currentResponseText = ""
-
-    if commandDetailCommandEditBox then
-        currentCommandText = SanitizeCommandText(commandDetailCommandEditBox:GetText() or "")
-    end
-
-    if commandDetailResponseEditBox then
-        currentResponseText = LimitTextLength(commandDetailResponseEditBox:GetText() or "", RESPONSE_MAX_LENGTH)
-    end
-
-    if commandDetailCommandEditBox then
-        if currentCommandText ~= tostring(selectedCommandRow.command or "") then
-            commandDetailCommandEditBox:SetTextColor(0, 1, 0)
-        else
-            commandDetailCommandEditBox:SetTextColor(1, 1, 1)
-        end
-    end
-
-    if commandDetailResponseEditBox then
-        if currentResponseText ~= tostring(selectedCommandRow.response or "") then
-            commandDetailResponseEditBox:SetTextColor(0, 1, 0)
-        else
-            commandDetailResponseEditBox:SetTextColor(1, 1, 1)
-        end
-    end
-end
-
-local function UpdateCommandDetailDirtyState()
-    if not commandDetailStatusText then
-        return
-    end
-
-    if not selectedCommandRow or selectedCommandRow.isDeleted then
-        commandDetailStatusText:SetText("")
-        commandDetailStatusText:Hide()
-        RefreshCommandDetailInputColors()
-        return
-    end
-
-    if not IsCurrentPresetEditable() then
-        commandDetailStatusText:SetText("|cffaaaaaaDefault preset is locked and cannot be edited.|r")
-        commandDetailStatusText:Show()
-        RefreshCommandDetailInputColors()
-        return
-    end
-
-    if selectedCommandRow.isSystemCommand then
-        commandDetailStatusText:SetText("|cffaaaaaaThis command is built-in and cannot be edited or deleted.|r")
-        commandDetailStatusText:Show()
-        RefreshCommandDetailInputColors()
-        return
-    end
-
-    local currentCommandText = ""
-    local currentResponseText = ""
-
-    if commandDetailCommandEditBox then
-        currentCommandText = SanitizeCommandText(commandDetailCommandEditBox:GetText() or "")
-    end
-
-    if commandDetailResponseEditBox then
-        currentResponseText = LimitTextLength(commandDetailResponseEditBox:GetText() or "", RESPONSE_MAX_LENGTH)
-    end
-
-    RefreshCommandDetailInputColors()
-
-    if currentCommandText ~= tostring(selectedCommandRow.command or "") or currentResponseText ~= tostring(selectedCommandRow.response or "") then
-        if TrimText(currentCommandText) == "" then
-            commandDetailStatusText:SetText("|cffff3b30Command Required|r")
-            commandDetailStatusText:Show()
-        elseif TrimText(currentResponseText) == "" then
-            commandDetailStatusText:SetText("|cffff3b30Response Required|r")
-            commandDetailStatusText:Show()
-        elseif IsReservedHelpAlias(currentCommandText) then
-            commandDetailStatusText:SetText("|cffff3b30Reserved Command|r")
-            commandDetailStatusText:Show()
-        elseif DoesCommandExist(currentCommandText, selectedCommandRow) then
-            commandDetailStatusText:SetText("|cffff3b30Duplicate Command|r")
-            commandDetailStatusText:Show()
-        else
-            commandDetailStatusText:SetText("|cffffff00Not Saved|r")
-            commandDetailStatusText:Show()
-        end
-    else
-        commandDetailStatusText:SetText("")
-        commandDetailStatusText:Hide()
-    end
-end
+------------------------------------------------------------
+-- COMMAND DETAIL UI
+------------------------------------------------------------
 
 local function RefreshCommandListButtonText(button)
     if not button or not button.row then
@@ -936,7 +946,7 @@ local function RefreshCommandListButtonText(button)
     local commandText = TrimText(button.row.command or "")
 
     if button.row.isSystemCommand then
-        commandText = HELP_COMMAND_DISPLAY_TEXT
+        commandText = CONST.HELP_COMMAND_DISPLAY_TEXT
     elseif commandText == "" then
         commandText = "<New Command>"
     end
@@ -949,20 +959,20 @@ local function RefreshCommandListButtonText(button)
 end
 
 local function RefreshSelectedCommandListPreview()
-    if not selectedCommandRow or selectedCommandRow.isDeleted or selectedCommandRow.isSystemCommand then
+    if not STATE.selectedCommandRow or STATE.selectedCommandRow.isDeleted or STATE.selectedCommandRow.isSystemCommand then
         return
     end
 
-    if not commandDetailCommandEditBox then
+    if not UI.commandDetailCommandEditBox then
         return
     end
 
     local buttonIndex = 1
     local selectedButton = nil
 
-    while buttonIndex <= #commandListButtons do
-        local currentButton = commandListButtons[buttonIndex]
-        if currentButton and currentButton.row == selectedCommandRow then
+    while buttonIndex <= #UI.commandListButtons do
+        local currentButton = UI.commandListButtons[buttonIndex]
+        if currentButton and currentButton.row == STATE.selectedCommandRow then
             selectedButton = currentButton
             break
         end
@@ -973,14 +983,14 @@ local function RefreshSelectedCommandListPreview()
         return
     end
 
-    local draftCommandText = SanitizeCommandText(commandDetailCommandEditBox:GetText() or "")
+    local draftCommandText = SanitizeCommandText(UI.commandDetailCommandEditBox:GetText() or "")
     local displayText = TrimText(draftCommandText or "")
 
     if displayText == "" then
         displayText = "<New Command>"
     end
 
-    if IsReservedHelpAlias(draftCommandText or "") or DoesCommandExist(draftCommandText or "", selectedCommandRow) then
+    if IsReservedHelpAlias(draftCommandText or "") or DoesCommandExist(draftCommandText or "", STATE.selectedCommandRow) then
         displayText = displayText .. " |cffff3b30(Dup)|r"
     end
 
@@ -993,12 +1003,13 @@ end
 
 local function RefreshCommandButtonSelection()
     local index = 1
-    while index <= #commandListButtons do
-        local button = commandListButtons[index]
+
+    while index <= #UI.commandListButtons do
+        local button = UI.commandListButtons[index]
         if button and button.row and button:GetFontString() then
             RefreshCommandListButtonText(button)
 
-            if button.row == selectedCommandRow then
+            if button.row == STATE.selectedCommandRow then
                 button:GetFontString():SetTextColor(0, 1, 0)
             elseif button.row.isSystemCommand then
                 button:GetFontString():SetTextColor(0.75, 0.75, 0.75)
@@ -1012,50 +1023,178 @@ local function RefreshCommandButtonSelection()
     RefreshSelectedCommandListPreview()
 end
 
-local function RefreshCommandDetailControlStates()
-    if not commandDetailCommandEditBox or not commandDetailResponseEditBox or not commandDetailSaveBtn or not commandDetailDeleteBtn then
-        return
-    end
+local function RefreshCommandDetailInputColors()
+    if not STATE.selectedCommandRow or STATE.selectedCommandRow.isDeleted then
+        if UI.commandDetailCommandEditBox then
+            UI.commandDetailCommandEditBox:SetTextColor(0.65, 0.65, 0.65)
+        end
 
-    if not selectedCommandRow or selectedCommandRow.isDeleted then
-        SetEditBoxInteractionEnabled(commandDetailCommandEditBox, false)
-        SetEditBoxInteractionEnabled(commandDetailResponseEditBox, false)
-        commandDetailSaveBtn:Disable()
-        commandDetailDeleteBtn:Disable()
+        if UI.commandDetailResponseEditBox then
+            UI.commandDetailResponseEditBox:SetTextColor(0.65, 0.65, 0.65)
+        end
         return
     end
 
     if not IsCurrentPresetEditable() then
-        SetEditBoxInteractionEnabled(commandDetailCommandEditBox, false)
-        SetEditBoxInteractionEnabled(commandDetailResponseEditBox, false)
-        commandDetailSaveBtn:Disable()
-        commandDetailDeleteBtn:Disable()
+        if UI.commandDetailCommandEditBox then
+            if STATE.selectedCommandRow.isSystemCommand then
+                UI.commandDetailCommandEditBox:SetTextColor(1, 0.82, 0)
+            else
+                UI.commandDetailCommandEditBox:SetTextColor(0.65, 0.65, 0.65)
+            end
+        end
+
+        if UI.commandDetailResponseEditBox then
+            UI.commandDetailResponseEditBox:SetTextColor(0.65, 0.65, 0.65)
+        end
         return
     end
 
-    if selectedCommandRow.isSystemCommand then
-        SetEditBoxInteractionEnabled(commandDetailCommandEditBox, false)
-        SetEditBoxInteractionEnabled(commandDetailResponseEditBox, false)
-        commandDetailSaveBtn:Disable()
-        commandDetailDeleteBtn:Disable()
+    if STATE.selectedCommandRow.isSystemCommand then
+        if UI.commandDetailCommandEditBox then
+            UI.commandDetailCommandEditBox:SetTextColor(1, 0.82, 0)
+        end
+
+        if UI.commandDetailResponseEditBox then
+            UI.commandDetailResponseEditBox:SetTextColor(1, 1, 1)
+        end
+        return
+    end
+
+    local currentCommandText = ""
+    local currentResponseText = ""
+
+    if UI.commandDetailCommandEditBox then
+        currentCommandText = SanitizeCommandText(UI.commandDetailCommandEditBox:GetText() or "")
+    end
+
+    if UI.commandDetailResponseEditBox then
+        currentResponseText = LimitTextLength(UI.commandDetailResponseEditBox:GetText() or "", CONST.RESPONSE_MAX_LENGTH)
+    end
+
+    if UI.commandDetailCommandEditBox then
+        if currentCommandText ~= tostring(STATE.selectedCommandRow.command or "") then
+            UI.commandDetailCommandEditBox:SetTextColor(0, 1, 0)
+        else
+            UI.commandDetailCommandEditBox:SetTextColor(1, 1, 1)
+        end
+    end
+
+    if UI.commandDetailResponseEditBox then
+        if currentResponseText ~= tostring(STATE.selectedCommandRow.response or "") then
+            UI.commandDetailResponseEditBox:SetTextColor(0, 1, 0)
+        else
+            UI.commandDetailResponseEditBox:SetTextColor(1, 1, 1)
+        end
+    end
+end
+
+local function UpdateCommandDetailDirtyState()
+    if not UI.commandDetailStatusText then
+        return
+    end
+
+    if not STATE.selectedCommandRow or STATE.selectedCommandRow.isDeleted then
+        UI.commandDetailStatusText:SetText("")
+        UI.commandDetailStatusText:Hide()
+        RefreshCommandDetailInputColors()
+        return
+    end
+
+    if not IsCurrentPresetEditable() then
+        UI.commandDetailStatusText:SetText("|cffaaaaaaDefault preset is locked and cannot be edited.|r")
+        UI.commandDetailStatusText:Show()
+        RefreshCommandDetailInputColors()
+        return
+    end
+
+    if STATE.selectedCommandRow.isSystemCommand then
+        UI.commandDetailStatusText:SetText("|cffaaaaaaThis command is built-in and cannot be edited or deleted.|r")
+        UI.commandDetailStatusText:Show()
+        RefreshCommandDetailInputColors()
+        return
+    end
+
+    local currentCommandText = ""
+    local currentResponseText = ""
+
+    if UI.commandDetailCommandEditBox then
+        currentCommandText = SanitizeCommandText(UI.commandDetailCommandEditBox:GetText() or "")
+    end
+
+    if UI.commandDetailResponseEditBox then
+        currentResponseText = LimitTextLength(UI.commandDetailResponseEditBox:GetText() or "", CONST.RESPONSE_MAX_LENGTH)
+    end
+
+    RefreshCommandDetailInputColors()
+
+    if currentCommandText ~= tostring(STATE.selectedCommandRow.command or "") or currentResponseText ~= tostring(STATE.selectedCommandRow.response or "") then
+        if TrimText(currentCommandText) == "" then
+            UI.commandDetailStatusText:SetText("|cffff3b30Command Required|r")
+            UI.commandDetailStatusText:Show()
+        elseif TrimText(currentResponseText) == "" then
+            UI.commandDetailStatusText:SetText("|cffff3b30Response Required|r")
+            UI.commandDetailStatusText:Show()
+        elseif IsReservedHelpAlias(currentCommandText) then
+            UI.commandDetailStatusText:SetText("|cffff3b30Reserved Command|r")
+            UI.commandDetailStatusText:Show()
+        elseif DoesCommandExist(currentCommandText, STATE.selectedCommandRow) then
+            UI.commandDetailStatusText:SetText("|cffff3b30Duplicate Command|r")
+            UI.commandDetailStatusText:Show()
+        else
+            UI.commandDetailStatusText:SetText("|cffffff00Not Saved|r")
+            UI.commandDetailStatusText:Show()
+        end
     else
-        SetEditBoxInteractionEnabled(commandDetailCommandEditBox, true)
-        SetEditBoxInteractionEnabled(commandDetailResponseEditBox, true)
-        commandDetailSaveBtn:Enable()
-        commandDetailDeleteBtn:Enable()
+        UI.commandDetailStatusText:SetText("")
+        UI.commandDetailStatusText:Hide()
+    end
+end
+
+local function RefreshCommandDetailControlStates()
+    if not UI.commandDetailCommandEditBox or not UI.commandDetailResponseEditBox or not UI.commandDetailSaveBtn or not UI.commandDetailDeleteBtn then
+        return
+    end
+
+    if not STATE.selectedCommandRow or STATE.selectedCommandRow.isDeleted then
+        SetEditBoxInteractionEnabled(UI.commandDetailCommandEditBox, false)
+        SetEditBoxInteractionEnabled(UI.commandDetailResponseEditBox, false)
+        UI.commandDetailSaveBtn:Disable()
+        UI.commandDetailDeleteBtn:Disable()
+        return
+    end
+
+    if not IsCurrentPresetEditable() then
+        SetEditBoxInteractionEnabled(UI.commandDetailCommandEditBox, false)
+        SetEditBoxInteractionEnabled(UI.commandDetailResponseEditBox, false)
+        UI.commandDetailSaveBtn:Disable()
+        UI.commandDetailDeleteBtn:Disable()
+        return
+    end
+
+    if STATE.selectedCommandRow.isSystemCommand then
+        SetEditBoxInteractionEnabled(UI.commandDetailCommandEditBox, false)
+        SetEditBoxInteractionEnabled(UI.commandDetailResponseEditBox, false)
+        UI.commandDetailSaveBtn:Disable()
+        UI.commandDetailDeleteBtn:Disable()
+    else
+        SetEditBoxInteractionEnabled(UI.commandDetailCommandEditBox, true)
+        SetEditBoxInteractionEnabled(UI.commandDetailResponseEditBox, true)
+        UI.commandDetailSaveBtn:Enable()
+        UI.commandDetailDeleteBtn:Enable()
     end
 end
 
 local function LoadSelectedCommandToDetailPanel()
-    if not commandDetailPanel then
+    if not UI.commandDetailPanel then
         return
     end
 
-    if not selectedCommandRow or selectedCommandRow.isDeleted then
-        commandDetailPanel:Hide()
+    if not STATE.selectedCommandRow or STATE.selectedCommandRow.isDeleted then
+        UI.commandDetailPanel:Hide()
 
-        if commandDetailEmptyText then
-            commandDetailEmptyText:Show()
+        if UI.commandDetailEmptyText then
+            UI.commandDetailEmptyText:Show()
         end
 
         RefreshCommandDetailControlStates()
@@ -1063,27 +1202,27 @@ local function LoadSelectedCommandToDetailPanel()
         return
     end
 
-    if commandDetailEmptyText then
-        commandDetailEmptyText:Hide()
+    if UI.commandDetailEmptyText then
+        UI.commandDetailEmptyText:Hide()
     end
 
-    commandDetailPanel:Show()
+    UI.commandDetailPanel:Show()
 
-    if selectedCommandRow.isSystemCommand then
-        if commandDetailCommandEditBox then
-            commandDetailCommandEditBox:SetText(HELP_COMMAND_DISPLAY_TEXT)
+    if STATE.selectedCommandRow.isSystemCommand then
+        if UI.commandDetailCommandEditBox then
+            UI.commandDetailCommandEditBox:SetText(CONST.HELP_COMMAND_DISPLAY_TEXT)
         end
 
-        if commandDetailResponseEditBox then
-            commandDetailResponseEditBox:SetText("This is a built-in command. Players can type !help or !commands to receive the full command list.")
+        if UI.commandDetailResponseEditBox then
+            UI.commandDetailResponseEditBox:SetText("This is a built-in command. Players can type !help or !commands to receive the full command list.")
         end
     else
-        if commandDetailCommandEditBox then
-            commandDetailCommandEditBox:SetText(selectedCommandRow.command or "")
+        if UI.commandDetailCommandEditBox then
+            UI.commandDetailCommandEditBox:SetText(STATE.selectedCommandRow.command or "")
         end
 
-        if commandDetailResponseEditBox then
-            commandDetailResponseEditBox:SetText(selectedCommandRow.response or "")
+        if UI.commandDetailResponseEditBox then
+            UI.commandDetailResponseEditBox:SetText(STATE.selectedCommandRow.response or "")
         end
     end
 
@@ -1094,7 +1233,7 @@ local function LoadSelectedCommandToDetailPanel()
 end
 
 local function SelectCommandRow(row)
-    selectedCommandRow = row
+    STATE.selectedCommandRow = row
     LoadSelectedCommandToDetailPanel()
 end
 
@@ -1108,8 +1247,24 @@ local function SelectTopVisibleCommandRow()
     end
 end
 
+local function ClearCommandListButtons()
+    local index = 1
+
+    while index <= #UI.commandListButtons do
+        local button = UI.commandListButtons[index]
+        if button then
+            button:Hide()
+            button:ClearAllPoints()
+            button.row = nil
+            button:SetText("")
+            button:SetParent(UI.commandContentFrame)
+        end
+        index = index + 1
+    end
+end
+
 local function RefreshCommandListUI()
-    if not commandContentFrame then
+    if not UI.commandContentFrame then
         return
     end
 
@@ -1120,16 +1275,17 @@ local function RefreshCommandListUI()
 
     while index <= #visibleRows do
         local row = visibleRows[index]
-        local button = commandListButtons[index]
+        local button = UI.commandListButtons[index]
 
         if not button then
-            button = CreateFrame("Button", nil, commandContentFrame, "UIPanelButtonTemplate")
+            button = CreateFrame("Button", nil, UI.commandContentFrame, "UIPanelButtonTemplate")
             button:SetHeight(24)
-            commandListButtons[index] = button
+            UI.commandListButtons[index] = button
+            TrySkinButton(button)
         end
 
         button:Show()
-        button:SetParent(commandContentFrame)
+        button:SetParent(UI.commandContentFrame)
         button:ClearAllPoints()
         button:SetPoint("TOPLEFT", 0, -((index - 1) * 28))
         button:SetPoint("TOPRIGHT", 0, -((index - 1) * 28))
@@ -1147,8 +1303,8 @@ local function RefreshCommandListUI()
     end
 
     local hideIndex = #visibleRows + 1
-    while hideIndex <= #commandListButtons do
-        local button = commandListButtons[hideIndex]
+    while hideIndex <= #UI.commandListButtons do
+        local button = UI.commandListButtons[hideIndex]
         if button then
             button:Hide()
             button:ClearAllPoints()
@@ -1163,103 +1319,69 @@ local function RefreshCommandListUI()
         totalHeight = 1
     end
 
-    commandContentFrame:SetHeight(totalHeight)
+    UI.commandContentFrame:SetHeight(totalHeight)
     RefreshCommandButtonSelection()
-
-    if TryGetElvUISkinModule then
-        local eValue, sValue = TryGetElvUISkinModule()
-        if eValue and sValue then
-            local buttonIndex = 1
-            while buttonIndex <= #visibleRows do
-                local button = commandListButtons[buttonIndex]
-                if button and not button.isSkinned then
-                    sValue:HandleButton(button)
-                    button.isSkinned = true
-                end
-                buttonIndex = buttonIndex + 1
-            end
-        end
-    end
 end
 
-local function CreateCommandRow(commandValue, responseValue)
-    local row = {
-        command = SanitizeCommandText(commandValue or ""),
-        response = LimitTextLength(responseValue or "", RESPONSE_MAX_LENGTH),
-        isDeleted = false,
-        hasDuplicate = false,
-        isSystemCommand = false
-    }
-
-    if IsReservedHelpAlias(row.command) then
-        row.command = ""
-        row.response = ""
-    end
-
-    commandRows[#commandRows + 1] = row
-
-    RefreshAllDuplicateStates()
-    RefreshAddCommandButtonState()
-
-    return row
-end
+------------------------------------------------------------
+-- COMMAND ACTIONS
+------------------------------------------------------------
 
 local function SaveSelectedCommandDetail()
     if not IsCurrentPresetEditable() then
-        if commandDetailStatusText then
-            commandDetailStatusText:SetText("|cffaaaaaaDefault preset is locked and cannot be edited.|r")
-            commandDetailStatusText:Show()
+        if UI.commandDetailStatusText then
+            UI.commandDetailStatusText:SetText("|cffaaaaaaDefault preset is locked and cannot be edited.|r")
+            UI.commandDetailStatusText:Show()
         end
         return
     end
 
-    if not selectedCommandRow or selectedCommandRow.isDeleted then
+    if not STATE.selectedCommandRow or STATE.selectedCommandRow.isDeleted then
         return
     end
 
-    if selectedCommandRow.isSystemCommand then
+    if STATE.selectedCommandRow.isSystemCommand then
         return
     end
 
-    local commandText = SanitizeCommandText(commandDetailCommandEditBox:GetText() or "")
-    local responseText = TrimText(commandDetailResponseEditBox:GetText() or "")
-
-    responseText = LimitTextLength(responseText, RESPONSE_MAX_LENGTH)
+    local commandText = SanitizeCommandText(UI.commandDetailCommandEditBox:GetText() or "")
+    local responseText = TrimText(UI.commandDetailResponseEditBox:GetText() or "")
+    responseText = LimitTextLength(responseText, CONST.RESPONSE_MAX_LENGTH)
 
     if commandText == "" then
-        if commandDetailStatusText then
-            commandDetailStatusText:SetText("|cffff3b30Command Required|r")
-            commandDetailStatusText:Show()
+        if UI.commandDetailStatusText then
+            UI.commandDetailStatusText:SetText("|cffff3b30Command Required|r")
+            UI.commandDetailStatusText:Show()
         end
         return
     end
 
     if responseText == "" then
-        if commandDetailStatusText then
-            commandDetailStatusText:SetText("|cffff3b30Response Required|r")
-            commandDetailStatusText:Show()
+        if UI.commandDetailStatusText then
+            UI.commandDetailStatusText:SetText("|cffff3b30Response Required|r")
+            UI.commandDetailStatusText:Show()
         end
         return
     end
 
     if IsReservedHelpAlias(commandText) then
-        if commandDetailStatusText then
-            commandDetailStatusText:SetText("|cffff3b30Reserved Command|r")
-            commandDetailStatusText:Show()
+        if UI.commandDetailStatusText then
+            UI.commandDetailStatusText:SetText("|cffff3b30Reserved Command|r")
+            UI.commandDetailStatusText:Show()
         end
         return
     end
 
-    if DoesCommandExist(commandText, selectedCommandRow) then
-        if commandDetailStatusText then
-            commandDetailStatusText:SetText("|cffff3b30Duplicate Command|r")
-            commandDetailStatusText:Show()
+    if DoesCommandExist(commandText, STATE.selectedCommandRow) then
+        if UI.commandDetailStatusText then
+            UI.commandDetailStatusText:SetText("|cffff3b30Duplicate Command|r")
+            UI.commandDetailStatusText:Show()
         end
         return
     end
 
-    selectedCommandRow.command = commandText
-    selectedCommandRow.response = responseText
+    STATE.selectedCommandRow.command = commandText
+    STATE.selectedCommandRow.response = responseText
 
     RefreshAllDuplicateStates()
     SaveAllCommandRowsToPreset()
@@ -1267,9 +1389,9 @@ local function SaveSelectedCommandDetail()
     RefreshAddCommandButtonState()
     LoadSelectedCommandToDetailPanel()
 
-    if commandDetailStatusText then
-        commandDetailStatusText:SetText("")
-        commandDetailStatusText:Hide()
+    if UI.commandDetailStatusText then
+        UI.commandDetailStatusText:SetText("")
+        UI.commandDetailStatusText:Hide()
     end
 end
 
@@ -1278,16 +1400,16 @@ local function DeleteSelectedCommandDetailConfirmed()
         return
     end
 
-    if not selectedCommandRow or selectedCommandRow.isDeleted then
+    if not STATE.selectedCommandRow or STATE.selectedCommandRow.isDeleted then
         return
     end
 
-    if selectedCommandRow.isSystemCommand then
+    if STATE.selectedCommandRow.isSystemCommand then
         return
     end
 
-    selectedCommandRow.isDeleted = true
-    selectedCommandRow = nil
+    STATE.selectedCommandRow.isDeleted = true
+    STATE.selectedCommandRow = nil
 
     RefreshAllDuplicateStates()
     SaveAllCommandRowsToPreset()
@@ -1297,15 +1419,15 @@ local function DeleteSelectedCommandDetailConfirmed()
 end
 
 local function GetSelectedCommandDisplayName()
-    if not selectedCommandRow or selectedCommandRow.isDeleted then
+    if not STATE.selectedCommandRow or STATE.selectedCommandRow.isDeleted then
         return "this command"
     end
 
-    if selectedCommandRow.isSystemCommand then
-        return HELP_COMMAND_DISPLAY_TEXT
+    if STATE.selectedCommandRow.isSystemCommand then
+        return CONST.HELP_COMMAND_DISPLAY_TEXT
     end
 
-    local commandText = TrimText(selectedCommandRow.command or "")
+    local commandText = TrimText(STATE.selectedCommandRow.command or "")
     if commandText == "" then
         return "<New Command>"
     end
@@ -1313,20 +1435,12 @@ local function GetSelectedCommandDisplayName()
     return commandText
 end
 
-local function GetSelectedPresetDisplayName()
-    local presetName = GetSelectedPresetName()
-    if not presetName or presetName == "" then
-        return "this preset"
-    end
-    return presetName
-end
-
 local function ShowDeleteSelectedCommandPopup()
-    if not selectedCommandRow or selectedCommandRow.isDeleted then
+    if not STATE.selectedCommandRow or STATE.selectedCommandRow.isDeleted then
         return
     end
 
-    if selectedCommandRow.isSystemCommand then
+    if STATE.selectedCommandRow.isSystemCommand then
         return
     end
 
@@ -1334,8 +1448,12 @@ local function ShowDeleteSelectedCommandPopup()
         return
     end
 
-    StaticPopup_Show(AUTO_RESPONSE_COMMAND_DELETE_POPUP, GetSelectedCommandDisplayName())
+    StaticPopup_Show(CONST.AUTO_RESPONSE_COMMAND_DELETE_POPUP, GetSelectedCommandDisplayName())
 end
+
+------------------------------------------------------------
+-- DEFAULT RESPONSE ACTIONS
+------------------------------------------------------------
 
 local function SaveDefaultResponse()
     if not IsCurrentPresetEditable() then
@@ -1347,16 +1465,20 @@ local function SaveDefaultResponse()
         return
     end
 
-    if not defaultResponseEditBox then
+    if not UI.defaultResponseEditBox then
         return
     end
 
-    presetData.defaultResponse = LimitTextLength(defaultResponseEditBox:GetText() or "", RESPONSE_MAX_LENGTH)
+    presetData.defaultResponse = LimitTextLength(UI.defaultResponseEditBox:GetText() or "", CONST.RESPONSE_MAX_LENGTH)
 
-    defaultResponseSaveResetAt = GetTime() + 3
+    STATE.defaultResponseSaveResetAt = GetTime() + 3
     RefreshDefaultResponseSaveButton()
     RefreshDefaultResponseInputColor()
 end
+
+------------------------------------------------------------
+-- PRESET LOAD / CREATE / DELETE
+------------------------------------------------------------
 
 local function LoadPresetIntoUI(presetName)
     EnsureSavedVariables()
@@ -1375,16 +1497,16 @@ local function LoadPresetIntoUI(presetName)
     RefreshPresetActionButtons()
     StopRenameMode()
 
-    if defaultResponseEditBox then
-        defaultResponseEditBox:SetText(presetData.defaultResponse or "")
+    if UI.defaultResponseEditBox then
+        UI.defaultResponseEditBox:SetText(presetData.defaultResponse or "")
     end
 
-    if defaultResponseCharCountText and defaultResponseEditBox then
-        local currentLength = string.len(defaultResponseEditBox:GetText() or "")
-        defaultResponseCharCountText:SetText(string.format("Characters: %d/%d", currentLength, RESPONSE_MAX_LENGTH))
+    if UI.defaultResponseCharCountText and UI.defaultResponseEditBox then
+        local currentLength = string.len(UI.defaultResponseEditBox:GetText() or "")
+        UI.defaultResponseCharCountText:SetText(string.format("Characters: %d/%d", currentLength, CONST.RESPONSE_MAX_LENGTH))
     end
 
-    defaultResponseSaveResetAt = 0
+    STATE.defaultResponseSaveResetAt = 0
     RefreshDefaultResponseSaveButton()
     RefreshDefaultResponseInputColor()
 
@@ -1426,7 +1548,7 @@ local function DeletePresetConfirmed(presetName)
 
     EnsureSavedVariables()
 
-    if presetName == CREATE_NEW_PRESET_LABEL then
+    if presetName == CONST.CREATE_NEW_PRESET_LABEL then
         return
     end
 
@@ -1440,8 +1562,16 @@ local function DeletePresetConfirmed(presetName)
 
     RTAutoResponseSave.presets[presetName] = nil
 
-    SetSelectedPresetName(DEFAULT_PRESET_NAME)
-    LoadPresetIntoUI(DEFAULT_PRESET_NAME)
+    SetSelectedPresetName(CONST.DEFAULT_PRESET_NAME)
+    LoadPresetIntoUI(CONST.DEFAULT_PRESET_NAME)
+end
+
+local function GetSelectedPresetDisplayName()
+    local presetName = GetSelectedPresetName()
+    if not presetName or presetName == "" then
+        return "this preset"
+    end
+    return presetName
 end
 
 local function ShowDeletePresetPopup()
@@ -1450,7 +1580,7 @@ local function ShowDeletePresetPopup()
         return
     end
 
-    if presetName == CREATE_NEW_PRESET_LABEL then
+    if presetName == CONST.CREATE_NEW_PRESET_LABEL then
         return
     end
 
@@ -1458,91 +1588,233 @@ local function ShowDeletePresetPopup()
         return
     end
 
-    StaticPopup_Show(AUTO_RESPONSE_PRESET_DELETE_POPUP, GetSelectedPresetDisplayName())
+    StaticPopup_Show(CONST.AUTO_RESPONSE_PRESET_DELETE_POPUP, GetSelectedPresetDisplayName())
 end
 
-local function CreatePresetDropdown(parentFrame)
-    local dropdownWidth = 220
-    local dropdownHeight = 24
+------------------------------------------------------------
+-- IMPORT / EXPORT
+------------------------------------------------------------
 
-    presetDropdownButton = CreateFrame("Button", nil, parentFrame, "UIPanelButtonTemplate")
-    presetDropdownButton:SetSize(dropdownWidth, dropdownHeight)
-    presetDropdownButton:SetText("")
+local function SerializePresetToString(presetName)
+    EnsureSavedVariables()
 
-    presetDropdownText = presetDropdownButton:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    presetDropdownText:SetPoint("LEFT", presetDropdownButton, "LEFT", 10, 0)
-    presetDropdownText:SetJustifyH("LEFT")
-    presetDropdownText:SetWidth(dropdownWidth - 20)
+    if not presetName or presetName == "" then
+        return ""
+    end
 
-    SetSelectedPresetName(nil)
+    local presetData = RTAutoResponseSave.presets[presetName]
+    if not presetData then
+        return ""
+    end
 
-    local menuFrame = CreateFrame("Frame", addonName .. "AutoResponsePresetDropdownMenu", UIParent, "UIDropDownMenuTemplate")
-    local isMenuOpen = false
+    local resultLines = {}
+    resultLines[#resultLines + 1] = "return {"
+    resultLines[#resultLines + 1] = "  name = " .. EscapeLuaString(presetName) .. ","
+    resultLines[#resultLines + 1] = "  defaultResponse = " .. EscapeLuaString(presetData.defaultResponse or "") .. ","
+    resultLines[#resultLines + 1] = "  commands = {"
 
-    presetDropdownButton:SetScript("OnClick", function(self)
-        if isMenuOpen and DropDownList1 and DropDownList1:IsShown() then
-            CloseDropDownMenus()
-            isMenuOpen = false
-            return
-        end
+    local index = 1
+    while presetData.commands and presetData.commands[index] do
+        local commandData = presetData.commands[index]
+        resultLines[#resultLines + 1] = "    { command = " .. EscapeLuaString(commandData.command or "") .. ", response = " .. EscapeLuaString(commandData.response or "") .. " },"
+        index = index + 1
+    end
 
-        local menuList = {}
-        local presetNames = GetSortedPresetNames()
+    resultLines[#resultLines + 1] = "  }"
+    resultLines[#resultLines + 1] = "}"
 
-        if #presetNames == 0 then
-            menuList[1] = {
-                text = "No presets",
-                notCheckable = true,
-                isTitle = true
-            }
-        else
-            local menuIndex = 1
+    return table.concat(resultLines, "\n")
+end
 
-            for _, presetName in ipairs(presetNames) do
-                local menuText = presetName
+local function BuildImportedPresetData(importedData)
+    local result = {
+        defaultResponse = "",
+        commands = {}
+    }
 
-                if presetName == CREATE_NEW_PRESET_LABEL then
-                    menuText = "|cff00ff00" .. presetName .. "|r"
+    if type(importedData) ~= "table" then
+        return nil
+    end
+
+    result.defaultResponse = LimitTextLength(tostring(importedData.defaultResponse or ""), CONST.RESPONSE_MAX_LENGTH)
+
+    if type(importedData.commands) == "table" then
+        local index = 1
+        while importedData.commands[index] do
+            local entry = importedData.commands[index]
+            if type(entry) == "table" then
+                local copiedEntry = CopyCommandEntry(entry)
+                if copiedEntry.command ~= "" and copiedEntry.response ~= "" then
+                    result.commands[#result.commands + 1] = {
+                        command = copiedEntry.command,
+                        response = copiedEntry.response
+                    }
                 end
-
-                menuList[menuIndex] = {
-                    text = menuText,
-                    checked = presetName ~= CREATE_NEW_PRESET_LABEL and GetSelectedPresetName() == presetName,
-                    func = function()
-                        isMenuOpen = false
-
-                        if presetName == CREATE_NEW_PRESET_LABEL then
-                            CreateNewPreset()
-                        else
-                            LoadPresetIntoUI(presetName)
-                        end
-                    end
-                }
-
-                menuIndex = menuIndex + 1
             end
+            index = index + 1
         end
+    end
 
-        EasyMenu(menuList, menuFrame, self, 0, 0, "MENU")
-        isMenuOpen = true
-    end)
-
-    presetDropdownButton:HookScript("OnHide", function()
-        isMenuOpen = false
-    end)
+    return result
 end
 
-local function RefreshEnableButton()
-    if not enableBtn then
+local function HidePresetTransferFrame()
+    STATE.presetTransferMode = nil
+
+    if UI.presetTransferEditBox then
+        UI.presetTransferEditBox:ClearFocus()
+    end
+
+    if UI.presetTransferStatusText then
+        UI.presetTransferStatusText:SetText("")
+        UI.presetTransferStatusText:Hide()
+    end
+
+    if UI.presetTransferFrame then
+        UI.presetTransferFrame:Hide()
+    end
+end
+
+local function ImportPresetFromText(rawText)
+    EnsureSavedVariables()
+
+    local importText = TrimText(rawText or "")
+    if importText == "" then
+        return false, "Import text is corrupted."
+    end
+
+    local loadedChunk = loadstring(importText)
+    if not loadedChunk then
+        return false, "Import text is corrupted."
+    end
+
+    local success, importedData = pcall(loadedChunk)
+    if not success or type(importedData) ~= "table" then
+        return false, "Import text is corrupted."
+    end
+
+    local importedPresetData = BuildImportedPresetData(importedData)
+    if not importedPresetData then
+        return false, "Import text is corrupted."
+    end
+
+    local importedName = LimitTextLength(TrimText(importedData.name or ""), CONST.PRESET_NAME_MAX_LENGTH)
+    if importedName == "" then
+        importedName = CONST.CREATE_NEW_PRESET_BASE_NAME
+    end
+
+    if importedName == CONST.DEFAULT_PRESET_NAME then
+        importedName = CONST.CREATE_NEW_PRESET_BASE_NAME
+    end
+
+    if importedName == CONST.CREATE_NEW_PRESET_LABEL then
+        importedName = CONST.CREATE_NEW_PRESET_BASE_NAME
+    end
+
+    local finalPresetName = GetUniquePresetName(importedName)
+    if finalPresetName == "" then
+        finalPresetName = GetNextNewPresetName()
+    end
+
+    RTAutoResponseSave.presets[finalPresetName] = CopyPresetData(importedPresetData)
+    RTAutoResponseSave.activePresetName = finalPresetName
+
+    LoadPresetIntoUI(finalPresetName)
+    return true, nil
+end
+
+local function ShowPresetTransferFrame(mode)
+    if not UI.presetTransferFrame or not UI.presetTransferEditBox or not UI.presetTransferTitleText then
         return
     end
 
-    if isAutoResponseEnabled then
-        enableBtn:SetText("|cff00ff00Enabled|r")
+    STATE.presetTransferMode = mode
+
+    if UI.presetTransferStatusText then
+        UI.presetTransferStatusText:SetText("")
+        UI.presetTransferStatusText:Hide()
+    end
+
+    if mode == "export" then
+        local presetName = GetSelectedPresetName()
+        local exportText = SerializePresetToString(presetName)
+
+        UI.presetTransferTitleText:SetText(CONST.PRESET_TRANSFER_EXPORT_TITLE)
+        UI.presetTransferEditBox:SetText(exportText)
+        UI.presetTransferEditBox.lastReadOnlyText = exportText
+        SetEditBoxReadOnly(UI.presetTransferEditBox, true)
+
+        if UI.presetTransferConfirmBtn then
+            UI.presetTransferConfirmBtn:SetText("Copy")
+        end
+
+        if UI.presetTransferCancelBtn then
+            UI.presetTransferCancelBtn:SetText("Close")
+        end
+    elseif mode == "import" then
+        UI.presetTransferTitleText:SetText(CONST.PRESET_TRANSFER_IMPORT_TITLE)
+        UI.presetTransferEditBox:SetText("")
+        UI.presetTransferEditBox.lastReadOnlyText = ""
+        SetEditBoxReadOnly(UI.presetTransferEditBox, false)
+
+        if UI.presetTransferConfirmBtn then
+            UI.presetTransferConfirmBtn:SetText("Import")
+        end
+
+        if UI.presetTransferCancelBtn then
+            UI.presetTransferCancelBtn:SetText("Cancel")
+        end
     else
-        enableBtn:SetText("Enable Auto Response")
+        return
+    end
+
+    UI.presetTransferFrame:ClearAllPoints()
+    UI.presetTransferFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    UI.presetTransferFrame:Show()
+    UI.presetTransferFrame:Raise()
+
+    UI.presetTransferEditBox:SetFocus()
+
+    if mode == "export" then
+        UI.presetTransferEditBox:HighlightText()
     end
 end
+
+local function OnPresetTransferConfirmClick()
+    if STATE.presetTransferMode == "export" then
+        if UI.presetTransferEditBox then
+            UI.presetTransferEditBox:SetFocus()
+            UI.presetTransferEditBox:HighlightText()
+        end
+
+        if UI.presetTransferStatusText then
+            UI.presetTransferStatusText:SetText("|cffffff00All text selected. Press Ctrl+C to copy.|r")
+            UI.presetTransferStatusText:Show()
+        end
+
+        return
+    end
+
+    if STATE.presetTransferMode == "import" then
+        local didImport, errorMessage = ImportPresetFromText(UI.presetTransferEditBox:GetText() or "")
+        if didImport then
+            HidePresetTransferFrame()
+        else
+            if UI.presetTransferStatusText then
+                UI.presetTransferStatusText:SetText("|cffff3b30" .. tostring(errorMessage or "Import text is corrupted.") .. "|r")
+                UI.presetTransferStatusText:Show()
+            end
+        end
+    end
+end
+
+local function OnPresetTransferCancelClick()
+    HidePresetTransferFrame()
+end
+
+------------------------------------------------------------
+-- WHISPER RESPONSE
+------------------------------------------------------------
 
 local function GetMatchedResponseForWhisper(messageText)
     EnsureSavedVariables()
@@ -1583,10 +1855,10 @@ end
 
 local function IsHelpCommand(messageText)
     local normalizedIncomingMessage = NormalizeCommandText(messageText)
-    if normalizedIncomingMessage == NormalizeCommandText(HELP_COMMAND_PRIMARY) then
+    if normalizedIncomingMessage == NormalizeCommandText(CONST.HELP_COMMAND_PRIMARY) then
         return true
     end
-    if normalizedIncomingMessage == NormalizeCommandText(HELP_COMMAND_SECONDARY) then
+    if normalizedIncomingMessage == NormalizeCommandText(CONST.HELP_COMMAND_SECONDARY) then
         return true
     end
     return false
@@ -1640,15 +1912,15 @@ local function GetCommandListMessages()
             additionText = ", " .. commandText
         end
 
-        if string.len(currentMessage .. additionText) <= CHAT_MESSAGE_MAX_LENGTH then
+        if string.len(currentMessage .. additionText) <= CONST.CHAT_MESSAGE_MAX_LENGTH then
             currentMessage = currentMessage .. additionText
         else
             resultMessages[#resultMessages + 1] = currentMessage
 
-            if string.len(prefix .. commandText) <= CHAT_MESSAGE_MAX_LENGTH then
+            if string.len(prefix .. commandText) <= CONST.CHAT_MESSAGE_MAX_LENGTH then
                 currentMessage = prefix .. commandText
             else
-                local oversizedCommand = LimitTextLength(commandText, CHAT_MESSAGE_MAX_LENGTH - string.len(prefix))
+                local oversizedCommand = LimitTextLength(commandText, CONST.CHAT_MESSAGE_MAX_LENGTH - string.len(prefix))
                 currentMessage = prefix .. oversizedCommand
             end
         end
@@ -1676,13 +1948,17 @@ local function SendWhisperMessageList(senderName, messages)
     while index <= #messages do
         local messageText = tostring(messages[index] or "")
         if messageText ~= "" then
-            SendChatMessage(LimitTextLength(messageText, CHAT_MESSAGE_MAX_LENGTH), "WHISPER", nil, senderName)
+            SendChatMessage(LimitTextLength(messageText, CONST.CHAT_MESSAGE_MAX_LENGTH), "WHISPER", nil, senderName)
         end
         index = index + 1
     end
 end
 
-StaticPopupDialogs[AUTO_RESPONSE_PRESET_DELETE_POPUP] = {
+------------------------------------------------------------
+-- POPUPS
+------------------------------------------------------------
+
+StaticPopupDialogs[CONST.AUTO_RESPONSE_PRESET_DELETE_POPUP] = {
     text = "Are you sure you want to delete \"%s\"?",
     button1 = YES,
     button2 = NO,
@@ -1698,7 +1974,7 @@ StaticPopupDialogs[AUTO_RESPONSE_PRESET_DELETE_POPUP] = {
     preferredIndex = 3
 }
 
-StaticPopupDialogs[AUTO_RESPONSE_COMMAND_DELETE_POPUP] = {
+StaticPopupDialogs[CONST.AUTO_RESPONSE_COMMAND_DELETE_POPUP] = {
     text = "Are you sure you want to delete \"%s\"?",
     button1 = YES,
     button2 = NO,
@@ -1714,6 +1990,10 @@ StaticPopupDialogs[AUTO_RESPONSE_COMMAND_DELETE_POPUP] = {
     preferredIndex = 3
 }
 
+------------------------------------------------------------
+-- EVENT HANDLERS
+------------------------------------------------------------
+
 eventFrame:RegisterEvent("CHAT_MSG_WHISPER")
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event ~= "CHAT_MSG_WHISPER" then
@@ -1722,7 +2002,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
 
     EnsureSavedVariables()
 
-    if not isAutoResponseEnabled then
+    if not STATE.isAutoResponseEnabled then
         return
     end
 
@@ -1747,19 +2027,19 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
 
     if isDefaultResponse then
         local currentTime = GetTime()
-        local lastSentTime = defaultResponseThrottleBySender[senderName]
+        local lastSentTime = STATE.defaultResponseThrottleBySender[senderName]
 
-        if lastSentTime and (currentTime - lastSentTime) < DEFAULT_RESPONSE_COOLDOWN_SECONDS then
+        if lastSentTime and (currentTime - lastSentTime) < CONST.DEFAULT_RESPONSE_COOLDOWN_SECONDS then
             return
         end
 
-        defaultResponseThrottleBySender[senderName] = currentTime
+        STATE.defaultResponseThrottleBySender[senderName] = currentTime
     end
 
     SendChatMessage(responseText, "WHISPER", nil, senderName)
 
     if isDefaultResponse then
-        SendChatMessage(COMMAND_HELP_GUIDE_MESSAGE, "WHISPER", nil, senderName)
+        SendChatMessage(CONST.COMMAND_HELP_GUIDE_MESSAGE, "WHISPER", nil, senderName)
     end
 end)
 
@@ -1767,18 +2047,87 @@ loader:RegisterEvent("ADDON_LOADED")
 loader:SetScript("OnEvent", function(self, event, arg1)
     if arg1 == addonName then
         EnsureSavedVariables()
-        isAutoResponseEnabled = RTAutoResponseSave.enabled and true or false
+        STATE.isAutoResponseEnabled = RTAutoResponseSave.enabled and true or false
         self:UnregisterEvent("ADDON_LOADED")
     end
 end)
 
-function CreateAutoResponseTabContent(parent, onClose)
-    EnsureSavedVariables()
+------------------------------------------------------------
+-- UI BUILDERS
+------------------------------------------------------------
 
-    local f = CreateFrame("Frame", nil, parent)
-    f:SetAllPoints(parent)
-    f:Hide()
+local function CreatePresetDropdown(parentFrame)
+    local dropdownWidth = 220
+    local dropdownHeight = 24
 
+    UI.presetDropdownButton = CreateFrame("Button", nil, parentFrame, "UIPanelButtonTemplate")
+    UI.presetDropdownButton:SetSize(dropdownWidth, dropdownHeight)
+    UI.presetDropdownButton:SetText("")
+
+    UI.presetDropdownText = UI.presetDropdownButton:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    UI.presetDropdownText:SetPoint("LEFT", UI.presetDropdownButton, "LEFT", 10, 0)
+    UI.presetDropdownText:SetJustifyH("LEFT")
+    UI.presetDropdownText:SetWidth(dropdownWidth - 20)
+
+    SetSelectedPresetName(nil)
+
+    local menuFrame = CreateFrame("Frame", addonName .. "AutoResponsePresetDropdownMenu", UIParent, "UIDropDownMenuTemplate")
+    local isMenuOpen = false
+
+    UI.presetDropdownButton:SetScript("OnClick", function(self)
+        if isMenuOpen and DropDownList1 and DropDownList1:IsShown() then
+            CloseDropDownMenus()
+            isMenuOpen = false
+            return
+        end
+
+        local menuList = {}
+        local presetNames = GetSortedPresetNames()
+
+        if #presetNames == 0 then
+            menuList[1] = {
+                text = "No presets",
+                notCheckable = true,
+                isTitle = true
+            }
+        else
+            local menuIndex = 1
+
+            for _, presetName in ipairs(presetNames) do
+                local menuText = presetName
+
+                if presetName == CONST.CREATE_NEW_PRESET_LABEL then
+                    menuText = "|cff00ff00" .. presetName .. "|r"
+                end
+
+                menuList[menuIndex] = {
+                    text = menuText,
+                    checked = presetName ~= CONST.CREATE_NEW_PRESET_LABEL and GetSelectedPresetName() == presetName,
+                    func = function()
+                        isMenuOpen = false
+
+                        if presetName == CONST.CREATE_NEW_PRESET_LABEL then
+                            CreateNewPreset()
+                        else
+                            LoadPresetIntoUI(presetName)
+                        end
+                    end
+                }
+
+                menuIndex = menuIndex + 1
+            end
+        end
+
+        EasyMenu(menuList, menuFrame, self, 0, 0, "MENU")
+        isMenuOpen = true
+    end)
+
+    UI.presetDropdownButton:HookScript("OnHide", function()
+        isMenuOpen = false
+    end)
+end
+
+local function BuildTopPresetRow(f)
     local topLeftX = 25
     local topRowY = -20
 
@@ -1787,67 +2136,85 @@ function CreateAutoResponseTabContent(parent, onClose)
     loadPresetLabel:SetText("Load Preset:")
 
     CreatePresetDropdown(f)
-    presetDropdownButton:SetPoint("LEFT", loadPresetLabel, "RIGHT", 10, 0)
+    UI.presetDropdownButton:SetPoint("LEFT", loadPresetLabel, "RIGHT", 10, 0)
 
-    renamePresetBG = CreateFrame("Frame", nil, f)
-    ApplyPixelStyle(renamePresetBG, 220, 24)
-    renamePresetBG:SetPoint("LEFT", loadPresetLabel, "RIGHT", 10, 0)
-    renamePresetBG:Hide()
+    UI.renamePresetBG = CreateFrame("Frame", nil, f)
+    ApplyPixelStyle(UI.renamePresetBG, 220, 24)
+    UI.renamePresetBG:SetPoint("LEFT", loadPresetLabel, "RIGHT", 10, 0)
+    UI.renamePresetBG:Hide()
 
-    renamePresetEditBox = CreateFrame("EditBox", nil, renamePresetBG)
-    renamePresetEditBox:SetAllPoints()
-    renamePresetEditBox:SetAutoFocus(false)
-    renamePresetEditBox:SetFontObject(ChatFontNormal)
-    renamePresetEditBox:SetJustifyH("LEFT")
-    renamePresetEditBox:SetMaxLetters(PRESET_NAME_MAX_LENGTH)
-    renamePresetEditBox:Hide()
+    UI.renamePresetEditBox = CreateFrame("EditBox", nil, UI.renamePresetBG)
+    UI.renamePresetEditBox:SetAllPoints()
+    UI.renamePresetEditBox:SetAutoFocus(false)
+    UI.renamePresetEditBox:SetFontObject(ChatFontNormal)
+    UI.renamePresetEditBox:SetJustifyH("LEFT")
+    UI.renamePresetEditBox:SetMaxLetters(CONST.PRESET_NAME_MAX_LENGTH)
+    UI.renamePresetEditBox:Hide()
 
-    renamePresetEditBox:SetScript("OnTextChanged", function(self)
+    UI.renamePresetEditBox:SetScript("OnTextChanged", function(self)
         local currentText = self:GetText() or ""
-        if string.len(currentText) > PRESET_NAME_MAX_LENGTH then
-            self:SetText(string.sub(currentText, 1, PRESET_NAME_MAX_LENGTH))
-            self:SetCursorPosition(PRESET_NAME_MAX_LENGTH)
+        if string.len(currentText) > CONST.PRESET_NAME_MAX_LENGTH then
+            self:SetText(string.sub(currentText, 1, CONST.PRESET_NAME_MAX_LENGTH))
+            self:SetCursorPosition(CONST.PRESET_NAME_MAX_LENGTH)
         end
     end)
 
-    renamePresetEditBox:SetScript("OnEnterPressed", function(self)
+    UI.renamePresetEditBox:SetScript("OnEnterPressed", function(self)
         RenameSelectedPreset(self:GetText() or "")
     end)
 
-    renamePresetEditBox:SetScript("OnEscapePressed", function()
+    UI.renamePresetEditBox:SetScript("OnEscapePressed", function()
         StopRenameMode()
     end)
 
-    renamePresetBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    renamePresetBtn:SetSize(80, 24)
-    renamePresetBtn:SetPoint("LEFT", presetDropdownButton, "RIGHT", 8, 0)
-    renamePresetBtn:SetText("Rename")
-    renamePresetBtn.isRenaming = false
-    renamePresetBtn:SetScript("OnClick", function()
-        if renamePresetBtn.isRenaming then
-            RenameSelectedPreset(renamePresetEditBox:GetText() or "")
+    UI.renamePresetBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    UI.renamePresetBtn:SetSize(80, 24)
+    UI.renamePresetBtn:SetPoint("LEFT", UI.presetDropdownButton, "RIGHT", 8, 0)
+    UI.renamePresetBtn:SetText("Rename")
+    UI.renamePresetBtn.isRenaming = false
+    UI.renamePresetBtn:SetScript("OnClick", function()
+        if UI.renamePresetBtn.isRenaming then
+            RenameSelectedPreset(UI.renamePresetEditBox:GetText() or "")
         else
             StartRenameMode()
         end
     end)
 
-    deletePresetBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    deletePresetBtn:SetSize(80, 24)
-    deletePresetBtn:SetPoint("LEFT", renamePresetBtn, "RIGHT", 8, 0)
-    deletePresetBtn:SetText("Delete")
-    deletePresetBtn:SetScript("OnClick", function()
+    UI.deletePresetBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    UI.deletePresetBtn:SetSize(80, 24)
+    UI.deletePresetBtn:SetPoint("LEFT", UI.renamePresetBtn, "RIGHT", 8, 0)
+    UI.deletePresetBtn:SetText("Delete")
+    UI.deletePresetBtn:SetScript("OnClick", function()
         ShowDeletePresetPopup()
     end)
 
-    defaultResponseLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    defaultResponseLabel:SetPoint("TOPLEFT", 25, -60)
-    defaultResponseLabel:SetText("Default Response:")
+    UI.exportPresetBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    UI.exportPresetBtn:SetSize(80, 24)
+    UI.exportPresetBtn:SetPoint("TOPRIGHT", -25, -16)
+    UI.exportPresetBtn:SetText("Export")
+    UI.exportPresetBtn:SetScript("OnClick", function()
+        ShowPresetTransferFrame("export")
+    end)
 
-    defaultResponseSaveBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    defaultResponseSaveBtn:SetSize(80, 24)
-    defaultResponseSaveBtn:SetPoint("TOPRIGHT", -25, -56)
-    defaultResponseSaveBtn:SetText("Save")
-    defaultResponseSaveBtn:SetScript("OnClick", function()
+    UI.importPresetBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    UI.importPresetBtn:SetSize(80, 24)
+    UI.importPresetBtn:SetPoint("RIGHT", UI.exportPresetBtn, "LEFT", -8, 0)
+    UI.importPresetBtn:SetText("Import")
+    UI.importPresetBtn:SetScript("OnClick", function()
+        ShowPresetTransferFrame("import")
+    end)
+end
+
+local function BuildDefaultResponseArea(f)
+    UI.defaultResponseLabel = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    UI.defaultResponseLabel:SetPoint("TOPLEFT", 25, -60)
+    UI.defaultResponseLabel:SetText("Default Response:")
+
+    UI.defaultResponseSaveBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    UI.defaultResponseSaveBtn:SetSize(80, 24)
+    UI.defaultResponseSaveBtn:SetPoint("TOPRIGHT", -25, -56)
+    UI.defaultResponseSaveBtn:SetText("Save")
+    UI.defaultResponseSaveBtn:SetScript("OnClick", function()
         SaveDefaultResponse()
     end)
 
@@ -1857,45 +2224,47 @@ function CreateAutoResponseTabContent(parent, onClose)
     defaultResponseBG:SetPoint("TOPRIGHT", -25, -84)
     defaultResponseBG:SetHeight(60)
 
-    defaultResponseEditBox = CreateFrame("EditBox", nil, defaultResponseBG)
-    defaultResponseEditBox:SetMultiLine(true)
-    defaultResponseEditBox:SetMaxLetters(RESPONSE_MAX_LENGTH)
-    defaultResponseEditBox:SetFontObject(ChatFontNormal)
-    defaultResponseEditBox:SetPoint("TOPLEFT", 8, -8)
-    defaultResponseEditBox:SetPoint("BOTTOMRIGHT", -8, 8)
-    defaultResponseEditBox:SetAutoFocus(false)
+    UI.defaultResponseEditBox = CreateFrame("EditBox", nil, defaultResponseBG)
+    UI.defaultResponseEditBox:SetMultiLine(true)
+    UI.defaultResponseEditBox:SetMaxLetters(CONST.RESPONSE_MAX_LENGTH)
+    UI.defaultResponseEditBox:SetFontObject(ChatFontNormal)
+    UI.defaultResponseEditBox:SetPoint("TOPLEFT", 8, -8)
+    UI.defaultResponseEditBox:SetPoint("BOTTOMRIGHT", -8, 8)
+    UI.defaultResponseEditBox:SetAutoFocus(false)
 
-    defaultResponseEditBox:SetScript("OnTextChanged", function(self)
+    UI.defaultResponseEditBox:SetScript("OnTextChanged", function(self)
         local textValue = self:GetText() or ""
         local textLength = string.len(textValue)
 
-        if defaultResponseCharCountText then
-            defaultResponseCharCountText:SetText(string.format("Characters: %d/%d", textLength, RESPONSE_MAX_LENGTH))
+        if UI.defaultResponseCharCountText then
+            UI.defaultResponseCharCountText:SetText(string.format("Characters: %d/%d", textLength, CONST.RESPONSE_MAX_LENGTH))
         end
 
         RefreshDefaultResponseInputColor()
         RefreshDefaultResponseSaveButton()
     end)
 
-    defaultResponseEditBox:SetScript("OnEscapePressed", function(self)
+    UI.defaultResponseEditBox:SetScript("OnEscapePressed", function(self)
         self:ClearFocus()
     end)
 
-    defaultResponseEditBox:SetScript("OnMouseDown", function(self)
+    UI.defaultResponseEditBox:SetScript("OnMouseDown", function(self)
         if IsCurrentPresetEditable() then
             self:SetFocus()
         end
     end)
 
-    defaultResponseCharCountText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    defaultResponseCharCountText:SetPoint("TOPRIGHT", defaultResponseBG, "BOTTOMRIGHT", 0, -5)
-    defaultResponseCharCountText:SetText("Characters: 0/255")
+    UI.defaultResponseCharCountText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    UI.defaultResponseCharCountText:SetPoint("TOPRIGHT", defaultResponseBG, "BOTTOMRIGHT", 0, -5)
+    UI.defaultResponseCharCountText:SetText("Characters: 0/255")
+end
 
-    addCommandBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    addCommandBtn:SetSize(140, 24)
-    addCommandBtn:SetPoint("TOPLEFT", 25, -160)
-    addCommandBtn:SetText("Add New Command")
-    addCommandBtn:SetScript("OnClick", function()
+local function BuildCommandListArea(f)
+    UI.addCommandBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    UI.addCommandBtn:SetSize(140, 24)
+    UI.addCommandBtn:SetPoint("TOPLEFT", 25, -160)
+    UI.addCommandBtn:SetText("Add New Command")
+    UI.addCommandBtn:SetScript("OnClick", function()
         if not IsCurrentPresetEditable() then
             return
         end
@@ -1916,67 +2285,70 @@ function CreateAutoResponseTabContent(parent, onClose)
     leftPaneLabel:SetPoint("TOPLEFT", 12, -12)
     leftPaneLabel:SetText("Command List")
 
-    commandScrollFrame = CreateFrame("ScrollFrame", addonName .. "AutoResponseCommandScrollFrame", leftPaneBG, "UIPanelScrollFrameTemplate")
-    commandScrollFrame:SetPoint("TOPLEFT", 10, -34)
-    commandScrollFrame:SetPoint("BOTTOMRIGHT", -28, 10)
+    UI.commandScrollFrame = CreateFrame("ScrollFrame", addonName .. "AutoResponseCommandScrollFrame", leftPaneBG, "UIPanelScrollFrameTemplate")
+    UI.commandScrollFrame:SetPoint("TOPLEFT", 10, -34)
+    UI.commandScrollFrame:SetPoint("BOTTOMRIGHT", -28, 10)
 
-    commandContentFrame = CreateFrame("Frame", nil, commandScrollFrame)
-    commandContentFrame:SetWidth(320)
-    commandContentFrame:SetHeight(1)
-    commandScrollFrame:SetScrollChild(commandContentFrame)
+    UI.commandContentFrame = CreateFrame("Frame", nil, UI.commandScrollFrame)
+    UI.commandContentFrame:SetWidth(320)
+    UI.commandContentFrame:SetHeight(1)
+    UI.commandScrollFrame:SetScrollChild(UI.commandContentFrame)
 
-    commandDetailEmptyText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    commandDetailEmptyText:SetPoint("TOPLEFT", leftPaneBG, "TOPRIGHT", 24, -20)
-    commandDetailEmptyText:SetText("Select a command to view details.")
+    UI.commandDetailEmptyText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    UI.commandDetailEmptyText:SetPoint("TOPLEFT", leftPaneBG, "TOPRIGHT", 24, -20)
+    UI.commandDetailEmptyText:SetText("Select a command to view details.")
 
-    commandDetailPanel = CreateFrame("Frame", nil, f)
-    ApplyPixelStyle(commandDetailPanel)
-    commandDetailPanel:SetPoint("TOPLEFT", leftPaneBG, "TOPRIGHT", 20, 0)
-    commandDetailPanel:SetPoint("TOPRIGHT", -25, -190)
-    commandDetailPanel:SetPoint("BOTTOMRIGHT", -25, 60)
+    return leftPaneBG
+end
 
-    commandDetailSaveBtn = CreateFrame("Button", nil, commandDetailPanel, "UIPanelButtonTemplate")
-    commandDetailSaveBtn:SetHeight(24)
-    commandDetailSaveBtn:SetPoint("TOPLEFT", 12, -12)
-    commandDetailSaveBtn:SetPoint("TOPRIGHT", commandDetailPanel, "TOP", -4, -12)
-    commandDetailSaveBtn:SetText("Save")
-    commandDetailSaveBtn:SetScript("OnClick", function()
+local function BuildCommandDetailArea(f, leftPaneBG)
+    UI.commandDetailPanel = CreateFrame("Frame", nil, f)
+    ApplyPixelStyle(UI.commandDetailPanel)
+    UI.commandDetailPanel:SetPoint("TOPLEFT", leftPaneBG, "TOPRIGHT", 20, 0)
+    UI.commandDetailPanel:SetPoint("TOPRIGHT", -25, -190)
+    UI.commandDetailPanel:SetPoint("BOTTOMRIGHT", -25, 60)
+
+    UI.commandDetailSaveBtn = CreateFrame("Button", nil, UI.commandDetailPanel, "UIPanelButtonTemplate")
+    UI.commandDetailSaveBtn:SetHeight(24)
+    UI.commandDetailSaveBtn:SetPoint("TOPLEFT", 12, -12)
+    UI.commandDetailSaveBtn:SetPoint("TOPRIGHT", UI.commandDetailPanel, "TOP", -4, -12)
+    UI.commandDetailSaveBtn:SetText("Save")
+    UI.commandDetailSaveBtn:SetScript("OnClick", function()
         SaveSelectedCommandDetail()
     end)
 
-    commandDetailDeleteBtn = CreateFrame("Button", nil, commandDetailPanel, "UIPanelButtonTemplate")
-    commandDetailDeleteBtn:SetHeight(24)
-    commandDetailDeleteBtn:SetPoint("TOPLEFT", commandDetailPanel, "TOP", 4, -12)
-    commandDetailDeleteBtn:SetPoint("TOPRIGHT", -12, -12)
-    commandDetailDeleteBtn:SetText("Delete")
-    commandDetailDeleteBtn:SetScript("OnClick", function()
+    UI.commandDetailDeleteBtn = CreateFrame("Button", nil, UI.commandDetailPanel, "UIPanelButtonTemplate")
+    UI.commandDetailDeleteBtn:SetHeight(24)
+    UI.commandDetailDeleteBtn:SetPoint("TOPLEFT", UI.commandDetailPanel, "TOP", 4, -12)
+    UI.commandDetailDeleteBtn:SetPoint("TOPRIGHT", -12, -12)
+    UI.commandDetailDeleteBtn:SetText("Delete")
+    UI.commandDetailDeleteBtn:SetScript("OnClick", function()
         ShowDeleteSelectedCommandPopup()
     end)
 
-    commandDetailStatusText = commandDetailPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    commandDetailStatusText:SetPoint("TOP", 0, -40)
-    commandDetailStatusText:SetText("")
+    UI.commandDetailStatusText = UI.commandDetailPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    UI.commandDetailStatusText:SetPoint("TOP", 0, -40)
+    UI.commandDetailStatusText:SetText("")
 
-    commandDetailCommandEditBG = CreateFrame("Frame", nil, commandDetailPanel)
-    ApplyPixelStyle(commandDetailCommandEditBG)
-    commandDetailCommandEditBG:SetPoint("TOPLEFT", 12, -82)
-    commandDetailCommandEditBG:SetPoint("TOPRIGHT", -12, -82)
-    commandDetailCommandEditBG:SetHeight(28)
+    UI.commandDetailCommandEditBG = CreateFrame("Frame", nil, UI.commandDetailPanel)
+    ApplyPixelStyle(UI.commandDetailCommandEditBG)
+    UI.commandDetailCommandEditBG:SetPoint("TOPLEFT", 12, -82)
+    UI.commandDetailCommandEditBG:SetPoint("TOPRIGHT", -12, -82)
+    UI.commandDetailCommandEditBG:SetHeight(28)
 
-    commandDetailCommandLabel = commandDetailPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    commandDetailCommandLabel:SetPoint("BOTTOM", commandDetailCommandEditBG, "TOP", 0, 8)
-    commandDetailCommandLabel:SetJustifyH("CENTER")
-    commandDetailCommandLabel:SetText("Command")
+    UI.commandDetailCommandLabel = UI.commandDetailPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    UI.commandDetailCommandLabel:SetPoint("BOTTOM", UI.commandDetailCommandEditBG, "TOP", 0, 8)
+    UI.commandDetailCommandLabel:SetText("Command")
 
-    commandDetailCommandEditBox = CreateFrame("EditBox", nil, commandDetailCommandEditBG)
-    commandDetailCommandEditBox:SetAllPoints()
-    commandDetailCommandEditBox:SetAutoFocus(false)
-    commandDetailCommandEditBox:SetFontObject(ChatFontNormal)
-    commandDetailCommandEditBox:SetJustifyH("LEFT")
-    commandDetailCommandEditBox:SetMaxLetters(COMMAND_NAME_MAX_LENGTH)
+    UI.commandDetailCommandEditBox = CreateFrame("EditBox", nil, UI.commandDetailCommandEditBG)
+    UI.commandDetailCommandEditBox:SetAllPoints()
+    UI.commandDetailCommandEditBox:SetAutoFocus(false)
+    UI.commandDetailCommandEditBox:SetFontObject(ChatFontNormal)
+    UI.commandDetailCommandEditBox:SetJustifyH("LEFT")
+    UI.commandDetailCommandEditBox:SetMaxLetters(CONST.COMMAND_NAME_MAX_LENGTH)
 
-    commandDetailCommandEditBox:SetScript("OnTextChanged", function(self)
-        if selectedCommandRow and selectedCommandRow.isSystemCommand then
+    UI.commandDetailCommandEditBox:SetScript("OnTextChanged", function(self)
+        if STATE.selectedCommandRow and STATE.selectedCommandRow.isSystemCommand then
             return
         end
 
@@ -2007,34 +2379,33 @@ function CreateAutoResponseTabContent(parent, onClose)
         RefreshSelectedCommandListPreview()
     end)
 
-    commandDetailCommandEditBox:SetScript("OnEnterPressed", function()
+    UI.commandDetailCommandEditBox:SetScript("OnEnterPressed", function()
         SaveSelectedCommandDetail()
     end)
 
-    commandDetailCommandEditBox:SetScript("OnEscapePressed", function(self)
+    UI.commandDetailCommandEditBox:SetScript("OnEscapePressed", function(self)
         self:ClearFocus()
     end)
 
-    commandDetailResponseBG = CreateFrame("Frame", nil, commandDetailPanel)
-    ApplyPixelStyle(commandDetailResponseBG)
-    commandDetailResponseBG:SetPoint("TOPLEFT", 12, -144)
-    commandDetailResponseBG:SetPoint("BOTTOMRIGHT", -12, 12)
+    UI.commandDetailResponseBG = CreateFrame("Frame", nil, UI.commandDetailPanel)
+    ApplyPixelStyle(UI.commandDetailResponseBG)
+    UI.commandDetailResponseBG:SetPoint("TOPLEFT", 12, -144)
+    UI.commandDetailResponseBG:SetPoint("BOTTOMRIGHT", -12, 12)
 
-    commandDetailResponseLabel = commandDetailPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    commandDetailResponseLabel:SetPoint("BOTTOM", commandDetailResponseBG, "TOP", 0, 8)
-    commandDetailResponseLabel:SetJustifyH("CENTER")
-    commandDetailResponseLabel:SetText("Response")
+    UI.commandDetailResponseLabel = UI.commandDetailPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    UI.commandDetailResponseLabel:SetPoint("BOTTOM", UI.commandDetailResponseBG, "TOP", 0, 8)
+    UI.commandDetailResponseLabel:SetText("Response")
 
-    commandDetailResponseEditBox = CreateFrame("EditBox", nil, commandDetailResponseBG)
-    commandDetailResponseEditBox:SetMultiLine(true)
-    commandDetailResponseEditBox:SetFontObject(ChatFontNormal)
-    commandDetailResponseEditBox:SetPoint("TOPLEFT", 6, -6)
-    commandDetailResponseEditBox:SetPoint("BOTTOMRIGHT", -6, 6)
-    commandDetailResponseEditBox:SetAutoFocus(false)
-    commandDetailResponseEditBox:SetMaxLetters(RESPONSE_MAX_LENGTH)
+    UI.commandDetailResponseEditBox = CreateFrame("EditBox", nil, UI.commandDetailResponseBG)
+    UI.commandDetailResponseEditBox:SetMultiLine(true)
+    UI.commandDetailResponseEditBox:SetFontObject(ChatFontNormal)
+    UI.commandDetailResponseEditBox:SetPoint("TOPLEFT", 6, -6)
+    UI.commandDetailResponseEditBox:SetPoint("BOTTOMRIGHT", -6, 6)
+    UI.commandDetailResponseEditBox:SetAutoFocus(false)
+    UI.commandDetailResponseEditBox:SetMaxLetters(CONST.RESPONSE_MAX_LENGTH)
 
-    commandDetailResponseEditBox:SetScript("OnTextChanged", function(self)
-        if selectedCommandRow and selectedCommandRow.isSystemCommand then
+    UI.commandDetailResponseEditBox:SetScript("OnTextChanged", function(self)
+        if STATE.selectedCommandRow and STATE.selectedCommandRow.isSystemCommand then
             return
         end
 
@@ -2045,9 +2416,9 @@ function CreateAutoResponseTabContent(parent, onClose)
         end
 
         local currentText = self:GetText() or ""
-        if string.len(currentText) > RESPONSE_MAX_LENGTH then
-            self:SetText(string.sub(currentText, 1, RESPONSE_MAX_LENGTH))
-            self:SetCursorPosition(RESPONSE_MAX_LENGTH)
+        if string.len(currentText) > CONST.RESPONSE_MAX_LENGTH then
+            self:SetText(string.sub(currentText, 1, CONST.RESPONSE_MAX_LENGTH))
+            self:SetCursorPosition(CONST.RESPONSE_MAX_LENGTH)
             RefreshSelectedCommandListPreview()
             UpdateCommandDetailDirtyState()
             return
@@ -2057,31 +2428,215 @@ function CreateAutoResponseTabContent(parent, onClose)
         RefreshSelectedCommandListPreview()
     end)
 
-    commandDetailResponseEditBox:SetScript("OnEnterPressed", function()
+    UI.commandDetailResponseEditBox:SetScript("OnEnterPressed", function()
         SaveSelectedCommandDetail()
     end)
 
-    commandDetailResponseEditBox:SetScript("OnEscapePressed", function(self)
+    UI.commandDetailResponseEditBox:SetScript("OnEscapePressed", function(self)
         self:ClearFocus()
     end)
 
-    commandDetailPanel:Hide()
+    UI.commandDetailPanel:Hide()
+end
 
-    enableBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    enableBtn:SetSize(170, 28)
-    enableBtn:SetPoint("BOTTOMRIGHT", -18, 18)
-    enableBtn:SetText("Enable Auto Response")
-    enableBtn:SetScript("OnClick", function()
-        isAutoResponseEnabled = not isAutoResponseEnabled
-        RTAutoResponseSave.enabled = isAutoResponseEnabled and true or false
+local function CreatePresetTransferPopup(parentFrame)
+    UI.presetTransferFrame = CreateFrame("Frame", addonName .. "AutoResponsePresetTransferFrame", UIParent)
+    ApplyPixelStyle(UI.presetTransferFrame, 520, 280)
+    UI.presetTransferFrame:SetFrameStrata("TOOLTIP")
+    UI.presetTransferFrame:SetFrameLevel(1000)
+    UI.presetTransferFrame:SetToplevel(true)
+    UI.presetTransferFrame:EnableMouse(true)
+    UI.presetTransferFrame:SetMovable(true)
+    UI.presetTransferFrame:RegisterForDrag("LeftButton")
+    UI.presetTransferFrame:SetClampedToScreen(true)
+    UI.presetTransferFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    UI.presetTransferFrame:SetScript("OnDragStart", function(self)
+        self:StartMoving()
+    end)
+    UI.presetTransferFrame:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+    end)
+    UI.presetTransferFrame:Hide()
+
+    UI.presetTransferTitleText = UI.presetTransferFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    UI.presetTransferTitleText:SetPoint("TOP", 0, -14)
+    UI.presetTransferTitleText:SetText("Preset Transfer")
+
+    local presetTransferInfoText = UI.presetTransferFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    presetTransferInfoText:SetPoint("TOPLEFT", 14, -38)
+    presetTransferInfoText:SetPoint("TOPRIGHT", -14, -38)
+    presetTransferInfoText:SetJustifyH("LEFT")
+    presetTransferInfoText:SetText("Export gives you the active preset as text. Import adds pasted preset text as a new preset.")
+
+    local presetTransferEditBG = CreateFrame("Frame", nil, UI.presetTransferFrame)
+    ApplyPixelStyle(presetTransferEditBG)
+    presetTransferEditBG:SetPoint("TOPLEFT", 14, -62)
+    presetTransferEditBG:SetPoint("TOPRIGHT", -14, -62)
+    presetTransferEditBG:SetHeight(168)
+    presetTransferEditBG:SetFrameLevel(UI.presetTransferFrame:GetFrameLevel() + 1)
+
+    UI.presetTransferScrollFrame = CreateFrame("ScrollFrame", addonName .. "AutoResponsePresetTransferScrollFrame", presetTransferEditBG, "UIPanelScrollFrameTemplate")
+    UI.presetTransferScrollFrame:SetPoint("TOPLEFT", 6, -6)
+    UI.presetTransferScrollFrame:SetPoint("BOTTOMRIGHT", -28, 6)
+    UI.presetTransferScrollFrame:SetFrameLevel(UI.presetTransferFrame:GetFrameLevel() + 2)
+
+    local presetTransferScrollChild = CreateFrame("Frame", nil, UI.presetTransferScrollFrame)
+    presetTransferScrollChild:SetWidth(460)
+    presetTransferScrollChild:SetHeight(168)
+    presetTransferScrollChild:SetFrameLevel(UI.presetTransferFrame:GetFrameLevel() + 2)
+    UI.presetTransferScrollFrame:SetScrollChild(presetTransferScrollChild)
+
+    UI.presetTransferEditBox = CreateFrame("EditBox", nil, presetTransferScrollChild)
+    UI.presetTransferEditBox:SetMultiLine(true)
+    UI.presetTransferEditBox:SetAutoFocus(false)
+    UI.presetTransferEditBox:SetFontObject(ChatFontNormal)
+    UI.presetTransferEditBox:SetPoint("TOPLEFT", 0, 0)
+    UI.presetTransferEditBox:SetWidth(460)
+    UI.presetTransferEditBox:SetHeight(168)
+    UI.presetTransferEditBox:EnableMouse(true)
+    UI.presetTransferEditBox:SetFrameLevel(UI.presetTransferFrame:GetFrameLevel() + 3)
+    UI.presetTransferEditBox.isReadOnly = false
+    UI.presetTransferEditBox.lastReadOnlyText = ""
+
+    UI.presetTransferMeasureText = presetTransferScrollChild:CreateFontString(nil, "ARTWORK", "ChatFontNormal")
+    UI.presetTransferMeasureText:SetWidth(460)
+    UI.presetTransferMeasureText:SetJustifyH("LEFT")
+    UI.presetTransferMeasureText:SetJustifyV("TOP")
+    UI.presetTransferMeasureText:SetText(" ")
+    UI.presetTransferMeasureText:Hide()
+
+    UI.presetTransferEditBox:SetScript("OnMouseDown", function(self)
+        self:SetFocus()
+
+        if self.isReadOnly then
+            self:HighlightText()
+        end
+    end)
+
+    UI.presetTransferEditBox:SetScript("OnChar", function(self)
+        if self.isReadOnly then
+            self:SetText(self.lastReadOnlyText or "")
+            self:HighlightText()
+        end
+    end)
+
+    UI.presetTransferEditBox:SetScript("OnTextChanged", function(self)
+        if self.isReadOnly then
+            local currentText = tostring(self:GetText() or "")
+            local expectedText = tostring(self.lastReadOnlyText or "")
+
+            if currentText ~= expectedText then
+                self:SetText(expectedText)
+                self:HighlightText()
+            end
+            return
+        end
+
+        local textValue = self:GetText() or ""
+
+        if textValue == "" then
+            textValue = " "
+        end
+
+        UI.presetTransferMeasureText:SetText(textValue)
+
+        local textHeight = UI.presetTransferMeasureText:GetHeight()
+        if not textHeight or textHeight < 168 then
+            textHeight = 168
+        end
+
+        self:SetHeight(textHeight + 16)
+        presetTransferScrollChild:SetHeight(textHeight + 16)
+    end)
+
+    UI.presetTransferEditBox:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+        HidePresetTransferFrame()
+    end)
+
+    UI.presetTransferStatusText = UI.presetTransferFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    UI.presetTransferStatusText:SetPoint("BOTTOMLEFT", 14, 38)
+    UI.presetTransferStatusText:SetPoint("BOTTOMRIGHT", -14, 38)
+    UI.presetTransferStatusText:SetJustifyH("LEFT")
+    UI.presetTransferStatusText:SetText("")
+    UI.presetTransferStatusText:Hide()
+
+    UI.presetTransferConfirmBtn = CreateFrame("Button", nil, UI.presetTransferFrame, "UIPanelButtonTemplate")
+    UI.presetTransferConfirmBtn:SetSize(100, 24)
+    UI.presetTransferConfirmBtn:SetPoint("BOTTOMRIGHT", -14, 12)
+    UI.presetTransferConfirmBtn:SetText("Import")
+    UI.presetTransferConfirmBtn:SetFrameLevel(UI.presetTransferFrame:GetFrameLevel() + 3)
+    UI.presetTransferConfirmBtn:SetScript("OnClick", OnPresetTransferConfirmClick)
+
+    UI.presetTransferCancelBtn = CreateFrame("Button", nil, UI.presetTransferFrame, "UIPanelButtonTemplate")
+    UI.presetTransferCancelBtn:SetSize(100, 24)
+    UI.presetTransferCancelBtn:SetPoint("RIGHT", UI.presetTransferConfirmBtn, "LEFT", -8, 0)
+    UI.presetTransferCancelBtn:SetText("Cancel")
+    UI.presetTransferCancelBtn:SetFrameLevel(UI.presetTransferFrame:GetFrameLevel() + 3)
+    UI.presetTransferCancelBtn:SetScript("OnClick", OnPresetTransferCancelClick)
+end
+
+local function BuildBottomButtons(f, onClose)
+    UI.enableBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    UI.enableBtn:SetSize(170, 28)
+    UI.enableBtn:SetPoint("BOTTOMRIGHT", -18, 18)
+    UI.enableBtn:SetText("Enable Auto Response")
+    UI.enableBtn:SetScript("OnClick", function()
+        STATE.isAutoResponseEnabled = not STATE.isAutoResponseEnabled
+        RTAutoResponseSave.enabled = STATE.isAutoResponseEnabled and true or false
         RefreshEnableButton()
     end)
 
-    local closeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-    closeBtn:SetSize(100, 28)
-    closeBtn:SetPoint("RIGHT", enableBtn, "LEFT", -10, 0)
-    closeBtn:SetText("Close")
-    closeBtn:SetScript("OnClick", onClose)
+    UI.closeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    UI.closeBtn:SetSize(100, 28)
+    UI.closeBtn:SetPoint("RIGHT", UI.enableBtn, "LEFT", -10, 0)
+    UI.closeBtn:SetText("Close")
+    UI.closeBtn:SetScript("OnClick", function()
+        HidePresetTransferFrame()
+        if onClose then
+            onClose()
+        end
+    end)
+end
+
+local function SkinStaticButtons()
+    TrySkinButton(UI.presetDropdownButton)
+    TrySkinButton(UI.renamePresetBtn)
+    TrySkinButton(UI.deletePresetBtn)
+    TrySkinButton(UI.importPresetBtn)
+    TrySkinButton(UI.exportPresetBtn)
+    TrySkinButton(UI.defaultResponseSaveBtn)
+    TrySkinButton(UI.addCommandBtn)
+    TrySkinButton(UI.commandDetailDeleteBtn)
+    TrySkinButton(UI.commandDetailSaveBtn)
+    TrySkinButton(UI.presetTransferConfirmBtn)
+    TrySkinButton(UI.presetTransferCancelBtn)
+    TrySkinButton(UI.enableBtn)
+    TrySkinButton(UI.closeBtn)
+end
+
+------------------------------------------------------------
+-- PUBLIC UI ENTRY
+------------------------------------------------------------
+
+function CreateAutoResponseTabContent(parent, onClose)
+    EnsureSavedVariables()
+
+    local f = CreateFrame("Frame", nil, parent)
+    f:SetAllPoints(parent)
+    f:Hide()
+
+    UI.root = f
+
+    BuildTopPresetRow(f)
+    BuildDefaultResponseArea(f)
+
+    local leftPaneBG = BuildCommandListArea(f)
+    BuildCommandDetailArea(f, leftPaneBG)
+
+    CreatePresetTransferPopup(f)
+    BuildBottomButtons(f, onClose)
+    SkinStaticButtons()
 
     f:SetScript("OnUpdate", function()
         RefreshDefaultResponseSaveButton()
@@ -2092,7 +2647,7 @@ function CreateAutoResponseTabContent(parent, onClose)
 
         local activePresetName = RTAutoResponseSave.activePresetName
         if not activePresetName or activePresetName == "" or not RTAutoResponseSave.presets[activePresetName] then
-            activePresetName = DEFAULT_PRESET_NAME
+            activePresetName = CONST.DEFAULT_PRESET_NAME
         end
 
         LoadPresetIntoUI(activePresetName)
@@ -2100,21 +2655,6 @@ function CreateAutoResponseTabContent(parent, onClose)
         RefreshEnableButton()
         RefreshDefaultResponseControlStates()
     end)
-
-    if TryGetElvUISkinModule then
-        local eValue, sValue = TryGetElvUISkinModule()
-        if eValue and sValue then
-            sValue:HandleButton(presetDropdownButton)
-            sValue:HandleButton(renamePresetBtn)
-            sValue:HandleButton(deletePresetBtn)
-            sValue:HandleButton(defaultResponseSaveBtn)
-            sValue:HandleButton(addCommandBtn)
-            sValue:HandleButton(commandDetailDeleteBtn)
-            sValue:HandleButton(commandDetailSaveBtn)
-            sValue:HandleButton(enableBtn)
-            sValue:HandleButton(closeBtn)
-        end
-    end
 
     RefreshPresetActionButtons()
     RefreshEnableButton()
