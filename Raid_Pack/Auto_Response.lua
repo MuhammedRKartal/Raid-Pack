@@ -14,6 +14,8 @@ local STATE = {
     defaultResponseSaveResetAt = 0,
     presetTransferMode = nil,
     defaultResponseThrottleBySender = {},
+    draggedCommandRow = nil,
+    isDraggingCommandRow = false,
 }
 
 local UI = {
@@ -58,6 +60,7 @@ local UI = {
     commandDetailSaveBtn = nil,
     commandDetailDeleteBtn = nil,
     commandDetailStatusText = nil,
+    commandBottomDropZone = nil,
 
     enableBtn = nil,
     closeBtn = nil,
@@ -76,13 +79,15 @@ local CONST = {
     COMMAND_NAME_MAX_LENGTH = 12,
     RESPONSE_MAX_LENGTH = 255,
     CHAT_MESSAGE_MAX_LENGTH = 255,
-    DEFAULT_RESPONSE_COOLDOWN_SECONDS = 90,
+    DEFAULT_RESPONSE_COOLDOWN_SECONDS = 450,
 
-    HELP_COMMAND_DISPLAY_TEXT = "!help & !commands",
+    HELP_COMMAND_DISPLAY_TEXT = "!help / !command / !commands",
     HELP_COMMAND_PRIMARY = "!help",
     HELP_COMMAND_SECONDARY = "!commands",
+    HELP_COMMAND_TERTIARY = "!command",
     HELP_COMMAND_AUTO_RESPONSE = "Shows the full command list.",
-    COMMAND_HELP_GUIDE_MESSAGE = "!help or !commands to see the full command list.",
+
+    DEFAULT_RESPONSE_HELP_SUFFIX = " Type !help or !command anytime you need help.",
 
     PRESET_TRANSFER_EXPORT_TITLE = "Export Preset",
     PRESET_TRANSFER_IMPORT_TITLE = "Import Preset",
@@ -173,6 +178,10 @@ local function IsReservedHelpAlias(text)
     end
 
     if normalizedText == NormalizeCommandText(CONST.HELP_COMMAND_SECONDARY) then
+        return true
+    end
+
+    if normalizedText == NormalizeCommandText(CONST.HELP_COMMAND_TERTIARY) then
         return true
     end
 
@@ -282,6 +291,38 @@ local function TrySkinButton(button)
 end
 
 ------------------------------------------------------------
+-- PUBLIC STATUS HELPERS
+------------------------------------------------------------
+
+function RT_IsAutoResponseEnabled()
+    return STATE.isAutoResponseEnabled and true or false
+end
+
+local function RefreshAutoResponseOverlayIfAvailable()
+    if RefreshStatusOverlay then
+        RefreshStatusOverlay()
+    end
+end
+
+local function DisableAutoResponse()
+    STATE.isAutoResponseEnabled = false
+
+    if type(RTAutoResponseSave) == "table" then
+        RTAutoResponseSave.enabled = false
+    end
+
+    if UI.enableBtn then
+        if STATE.isAutoResponseEnabled then
+            UI.enableBtn:SetText("|cff00ff00Enabled|r")
+        else
+            UI.enableBtn:SetText("Enable Auto Reply")
+        end
+    end
+
+    RefreshAutoResponseOverlayIfAvailable()
+end
+
+------------------------------------------------------------
 -- DATA COPY / SAVE HELPERS
 ------------------------------------------------------------
 
@@ -355,19 +396,94 @@ local function EnsureSavedVariables()
         RTAutoResponseSave.enabled = RTAutoResponseSave.enabled and true or false
     end
 
+    if type(RTAutoResponseSave.presetOrderCounter) ~= "number" then
+        RTAutoResponseSave.presetOrderCounter = 0
+    end
+
     for presetName, presetData in pairs(RTAutoResponseSave.presets) do
         if presetName ~= CONST.DEFAULT_PRESET_NAME then
-            RTAutoResponseSave.presets[presetName] = CopyPresetData(presetData)
+            local copiedPresetData = CopyPresetData(presetData)
+
+            if type(presetData) == "table" and type(presetData.order) == "number" then
+                copiedPresetData.order = presetData.order
+            else
+                RTAutoResponseSave.presetOrderCounter = RTAutoResponseSave.presetOrderCounter + 1
+                copiedPresetData.order = RTAutoResponseSave.presetOrderCounter
+            end
+
+            RTAutoResponseSave.presets[presetName] = copiedPresetData
         end
     end
 
-    RTAutoResponseSave.presets[CONST.DEFAULT_PRESET_NAME] = CopyPresetData(DEFAULT_PRESET_TEMPLATE)
+    local defaultPresetData = CopyPresetData(DEFAULT_PRESET_TEMPLATE)
+    defaultPresetData.order = -1
+    RTAutoResponseSave.presets[CONST.DEFAULT_PRESET_NAME] = defaultPresetData
 
     if not RTAutoResponseSave.activePresetName
         or RTAutoResponseSave.activePresetName == ""
         or not RTAutoResponseSave.presets[RTAutoResponseSave.activePresetName] then
         RTAutoResponseSave.activePresetName = CONST.DEFAULT_PRESET_NAME
     end
+end
+
+local function FlushActivePresetToSavedVariables()
+    EnsureSavedVariables()
+
+    local presetName = STATE.selectedPresetName
+
+    if not presetName or presetName == "" then
+        presetName = RTAutoResponseSave.activePresetName
+    end
+
+    if not presetName or presetName == "" then
+        presetName = CONST.DEFAULT_PRESET_NAME
+    end
+
+    if presetName == CONST.CREATE_NEW_PRESET_LABEL then
+        return
+    end
+
+    if not RTAutoResponseSave.presets[presetName] then
+        RTAutoResponseSave.presets[presetName] = {
+            defaultResponse = "",
+            commands = {}
+        }
+    end
+
+    local presetData = RTAutoResponseSave.presets[presetName]
+
+    if UI.defaultResponseEditBox then
+        presetData.defaultResponse = LimitTextLength(UI.defaultResponseEditBox:GetText() or "", CONST.RESPONSE_MAX_LENGTH)
+    else
+        presetData.defaultResponse = LimitTextLength(tostring(presetData.defaultResponse or ""), CONST.RESPONSE_MAX_LENGTH)
+    end
+
+    presetData.commands = {}
+
+    local saveIndex = 1
+    local rowIndex = 1
+
+    while rowIndex <= #DATA.commandRows do
+        local row = DATA.commandRows[rowIndex]
+
+        if row and not row.isDeleted and not row.isSystemCommand then
+            local sanitizedCommand = SanitizeCommandText(row.command or "")
+            local limitedResponse = LimitTextLength(row.response or "", CONST.RESPONSE_MAX_LENGTH)
+
+            if sanitizedCommand ~= "" and limitedResponse ~= "" and not IsReservedHelpAlias(sanitizedCommand) then
+                presetData.commands[saveIndex] = {
+                    command = sanitizedCommand,
+                    response = limitedResponse
+                }
+                saveIndex = saveIndex + 1
+            end
+        end
+
+        rowIndex = rowIndex + 1
+    end
+
+    RTAutoResponseSave.activePresetName = presetName
+    RTAutoResponseSave.enabled = STATE.isAutoResponseEnabled and true or false
 end
 
 ------------------------------------------------------------
@@ -452,20 +568,30 @@ local function GetSortedPresetNames()
     end
 
     table.sort(presetNames, function(leftValue, rightValue)
-        if leftValue == CONST.DEFAULT_PRESET_NAME then
-            return true
+        local leftPreset = RTAutoResponseSave.presets[leftValue]
+        local rightPreset = RTAutoResponseSave.presets[rightValue]
+
+        local leftOrder = -1
+        local rightOrder = -1
+
+        if leftPreset and type(leftPreset.order) == "number" then
+            leftOrder = leftPreset.order
         end
 
-        if rightValue == CONST.DEFAULT_PRESET_NAME then
-            return false
+        if rightPreset and type(rightPreset.order) == "number" then
+            rightOrder = rightPreset.order
         end
 
-        return string.lower(leftValue) < string.lower(rightValue)
+        if leftOrder ~= rightOrder then
+            return leftOrder > rightOrder
+        end
+
+        return tostring(leftValue) > tostring(rightValue)
     end)
 
     local result = { CONST.CREATE_NEW_PRESET_LABEL }
-    local index = 1
 
+    local index = 1
     while index <= #presetNames do
         result[#result + 1] = presetNames[index]
         index = index + 1
@@ -562,18 +688,63 @@ end
 
 local function GetVisibleCommandRows()
     local visibleRows = {}
-    local index = #DATA.commandRows
+    local index = 1
 
-    while index >= 1 do
+    while index <= #DATA.commandRows do
         local row = DATA.commandRows[index]
         if row and not row.isDeleted then
             visibleRows[#visibleRows + 1] = row
         end
-        index = index - 1
+        index = index + 1
     end
 
     visibleRows[#visibleRows + 1] = SYSTEM_HELP_ROW
     return visibleRows
+end
+
+local function GetCommandRowIndex(targetRow)
+    local index = 1
+
+    while index <= #DATA.commandRows do
+        if DATA.commandRows[index] == targetRow then
+            return index
+        end
+        index = index + 1
+    end
+
+    return nil
+end
+
+local function MoveCommandRowToIndex(sourceRow, targetIndex)
+    local sourceIndex = GetCommandRowIndex(sourceRow)
+
+    if not sourceIndex then
+        return
+    end
+
+    if targetIndex < 1 then
+        targetIndex = 1
+    end
+
+    local originalTargetIndex = targetIndex
+
+    table.remove(DATA.commandRows, sourceIndex)
+
+    local maxInsertIndex = #DATA.commandRows + 1
+
+    if targetIndex > maxInsertIndex then
+        targetIndex = maxInsertIndex
+    end
+
+    if sourceIndex < originalTargetIndex and targetIndex < maxInsertIndex then
+        targetIndex = targetIndex - 1
+    end
+
+    if targetIndex < 1 then
+        targetIndex = 1
+    end
+
+    table.insert(DATA.commandRows, targetIndex, sourceRow)
 end
 
 local function DoesCommandExist(commandText, ignoredRow)
@@ -632,38 +803,11 @@ local function RefreshAllDuplicateStates()
 end
 
 local function SaveAllCommandRowsToPreset()
-    local presetData = GetActivePresetData()
-    if not presetData then
-        return
-    end
-
     if not IsCurrentPresetEditable() then
         return
     end
 
-    presetData.commands = {}
-
-    local saveIndex = 1
-    local rowIndex = 1
-
-    while rowIndex <= #DATA.commandRows do
-        local row = DATA.commandRows[rowIndex]
-        if row and not row.isDeleted and not row.isSystemCommand then
-            local sanitizedCommand = SanitizeCommandText(row.command or "")
-            local limitedResponse = LimitTextLength(row.response or "", CONST.RESPONSE_MAX_LENGTH)
-
-            if sanitizedCommand ~= "" or limitedResponse ~= "" then
-                if not IsReservedHelpAlias(sanitizedCommand) then
-                    presetData.commands[saveIndex] = {
-                        command = sanitizedCommand,
-                        response = limitedResponse
-                    }
-                    saveIndex = saveIndex + 1
-                end
-            end
-        end
-        rowIndex = rowIndex + 1
-    end
+    FlushActivePresetToSavedVariables()
 end
 
 local function CreateCommandRow(commandValue, responseValue)
@@ -749,7 +893,7 @@ local function RefreshEnableButton()
     if STATE.isAutoResponseEnabled then
         UI.enableBtn:SetText("|cff00ff00Enabled|r")
     else
-        UI.enableBtn:SetText("Enable Auto Response")
+        UI.enableBtn:SetText("Enable Auto Reply")
     end
 end
 
@@ -927,6 +1071,9 @@ local function RenameSelectedPreset(newName)
     end
 
     RTAutoResponseSave.presets[finalName] = CopyPresetData(RTAutoResponseSave.presets[oldName])
+    if type(RTAutoResponseSave.presets[oldName]) == "table" and type(RTAutoResponseSave.presets[oldName].order) == "number" then
+        RTAutoResponseSave.presets[finalName].order = RTAutoResponseSave.presets[oldName].order
+    end
     RTAutoResponseSave.presets[oldName] = nil
 
     SetSelectedPresetName(finalName)
@@ -1214,7 +1361,7 @@ local function LoadSelectedCommandToDetailPanel()
         end
 
         if UI.commandDetailResponseEditBox then
-            UI.commandDetailResponseEditBox:SetText("This is a built-in command. Players can type !help or !commands to receive the full command list.")
+            UI.commandDetailResponseEditBox:SetText("This is a built-in command. Players can type !help, !command or !commands to receive the full command list.")
         end
     else
         if UI.commandDetailCommandEditBox then
@@ -1263,6 +1410,51 @@ local function ClearCommandListButtons()
     end
 end
 
+local function RefreshCommandDragVisuals()
+    local index = 1
+
+    while index <= #UI.commandListButtons do
+        local button = UI.commandListButtons[index]
+
+        if button then
+            RefreshCommandListButtonText(button)
+
+            if STATE.isDraggingCommandRow and button.row == STATE.draggedCommandRow then
+                local text = button:GetText() or ""
+
+                text = text:gsub("^<<%s*", "")
+                text = text:gsub("%s*>>$", "")
+
+                button:SetText("<< " .. text .. " >>")
+            end
+        end
+
+        index = index + 1
+    end
+end
+
+local function StartCommandRowDrag(row)
+    if not row or row.isDeleted or row.isSystemCommand then
+        return
+    end
+
+    if not IsCurrentPresetEditable() then
+        return
+    end
+
+    STATE.draggedCommandRow = row
+    STATE.isDraggingCommandRow = true
+
+    SelectCommandRow(row)
+    RefreshCommandDragVisuals()
+end
+
+local function StopCommandRowDrag()
+    STATE.draggedCommandRow = nil
+    STATE.isDraggingCommandRow = false
+    RefreshCommandDragVisuals()
+end
+
 local function RefreshCommandListUI()
     if not UI.commandContentFrame then
         return
@@ -1280,8 +1472,10 @@ local function RefreshCommandListUI()
         if not button then
             button = CreateFrame("Button", nil, UI.commandContentFrame, "UIPanelButtonTemplate")
             button:SetHeight(24)
-            UI.commandListButtons[index] = button
+            button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
             TrySkinButton(button)
+
+            UI.commandListButtons[index] = button
         end
 
         button:Show()
@@ -1293,10 +1487,71 @@ local function RefreshCommandListUI()
 
         RefreshCommandListButtonText(button)
 
-        button:SetScript("OnClick", function(self)
-            if self.row then
-                SelectCommandRow(self.row)
+        button:SetScript("OnClick", function(self, mouseButton)
+            if mouseButton == "LeftButton" then
+                if self.row then
+                    SelectCommandRow(self.row)
+                end
+                return
             end
+
+            if mouseButton == "RightButton" then
+                if not IsCurrentPresetEditable() then
+                    return
+                end
+
+                if not self.row or self.row.isDeleted or self.row.isSystemCommand then
+                    return
+                end
+
+                if STATE.isDraggingCommandRow and STATE.draggedCommandRow == self.row then
+                    StopCommandRowDrag()
+                    return
+                end
+
+                StartCommandRowDrag(self.row)
+            end
+        end)
+
+        button:SetScript("OnMouseDown", nil)
+        button:SetScript("OnMouseUp", nil)
+
+        button:SetScript("OnEnter", function(self)
+            if not STATE.isDraggingCommandRow then
+                return
+            end
+
+            if not STATE.draggedCommandRow then
+                return
+            end
+
+            if not IsCurrentPresetEditable() then
+                return
+            end
+
+            if self.row == STATE.draggedCommandRow then
+                return
+            end
+
+            if self.row and self.row.isSystemCommand then
+                MoveCommandRowToIndex(STATE.draggedCommandRow, #DATA.commandRows + 1)
+                FlushActivePresetToSavedVariables()
+                RefreshCommandListUI()
+                return
+            end
+
+            if not self.row or self.row.isDeleted then
+                return
+            end
+
+            local targetIndex = GetCommandRowIndex(self.row)
+            if not targetIndex then
+                return
+            end
+
+            MoveCommandRowToIndex(STATE.draggedCommandRow, targetIndex)
+            FlushActivePresetToSavedVariables()
+            RefreshCommandListUI()
         end)
 
         index = index + 1
@@ -1310,6 +1565,9 @@ local function RefreshCommandListUI()
             button:ClearAllPoints()
             button.row = nil
             button:SetText("")
+            if button.dragHighlight then
+                button.dragHighlight:Hide()
+            end
         end
         hideIndex = hideIndex + 1
     end
@@ -1320,7 +1578,15 @@ local function RefreshCommandListUI()
     end
 
     UI.commandContentFrame:SetHeight(totalHeight)
+
+    UI.commandContentFrame:SetScript("OnMouseUp", function(self, mouseButton)
+        if mouseButton == "RightButton" then
+            StopCommandRowDrag()
+        end
+    end)
+
     RefreshCommandButtonSelection()
+    RefreshCommandDragVisuals()
 end
 
 ------------------------------------------------------------
@@ -1384,7 +1650,7 @@ local function SaveSelectedCommandDetail()
     STATE.selectedCommandRow.response = responseText
 
     RefreshAllDuplicateStates()
-    SaveAllCommandRowsToPreset()
+    FlushActivePresetToSavedVariables()
     RefreshCommandListUI()
     RefreshAddCommandButtonState()
     LoadSelectedCommandToDetailPanel()
@@ -1412,7 +1678,7 @@ local function DeleteSelectedCommandDetailConfirmed()
     STATE.selectedCommandRow = nil
 
     RefreshAllDuplicateStates()
-    SaveAllCommandRowsToPreset()
+    FlushActivePresetToSavedVariables()
     RefreshCommandListUI()
     SelectTopVisibleCommandRow()
     RefreshAddCommandButtonState()
@@ -1471,6 +1737,8 @@ local function SaveDefaultResponse()
 
     presetData.defaultResponse = LimitTextLength(UI.defaultResponseEditBox:GetText() or "", CONST.RESPONSE_MAX_LENGTH)
 
+    FlushActivePresetToSavedVariables()
+
     STATE.defaultResponseSaveResetAt = GetTime() + 3
     RefreshDefaultResponseSaveButton()
     RefreshDefaultResponseInputColor()
@@ -1480,7 +1748,7 @@ end
 -- PRESET LOAD / CREATE / DELETE
 ------------------------------------------------------------
 
-local function LoadPresetIntoUI(presetName)
+local function LoadPresetIntoUI(presetName, shouldDisableAutoResponse)
     EnsureSavedVariables()
 
     if not presetName or presetName == "" then
@@ -1492,6 +1760,10 @@ local function LoadPresetIntoUI(presetName)
     end
 
     local presetData = RTAutoResponseSave.presets[presetName]
+
+    if shouldDisableAutoResponse then
+        DisableAutoResponse()
+    end
 
     SetSelectedPresetName(presetName)
     RefreshPresetActionButtons()
@@ -1531,14 +1803,18 @@ local function CreateNewPreset()
     EnsureSavedVariables()
 
     local presetName = GetNextNewPresetName()
-
-    RTAutoResponseSave.presets[presetName] = CopyPresetData({
+    local newPresetData = CopyPresetData({
         defaultResponse = "",
         commands = {}
     })
 
+    RTAutoResponseSave.presetOrderCounter = RTAutoResponseSave.presetOrderCounter + 1
+    newPresetData.order = RTAutoResponseSave.presetOrderCounter
+
+    RTAutoResponseSave.presets[presetName] = newPresetData
     RTAutoResponseSave.activePresetName = presetName
-    LoadPresetIntoUI(presetName)
+
+    LoadPresetIntoUI(presetName, true)
 end
 
 local function DeletePresetConfirmed(presetName)
@@ -1563,7 +1839,7 @@ local function DeletePresetConfirmed(presetName)
     RTAutoResponseSave.presets[presetName] = nil
 
     SetSelectedPresetName(CONST.DEFAULT_PRESET_NAME)
-    LoadPresetIntoUI(CONST.DEFAULT_PRESET_NAME)
+    LoadPresetIntoUI(CONST.DEFAULT_PRESET_NAME, true)
 end
 
 local function GetSelectedPresetDisplayName()
@@ -1716,10 +1992,14 @@ local function ImportPresetFromText(rawText)
         finalPresetName = GetNextNewPresetName()
     end
 
-    RTAutoResponseSave.presets[finalPresetName] = CopyPresetData(importedPresetData)
+    local finalPresetData = CopyPresetData(importedPresetData)
+    RTAutoResponseSave.presetOrderCounter = RTAutoResponseSave.presetOrderCounter + 1
+    finalPresetData.order = RTAutoResponseSave.presetOrderCounter
+
+    RTAutoResponseSave.presets[finalPresetName] = finalPresetData
     RTAutoResponseSave.activePresetName = finalPresetName
 
-    LoadPresetIntoUI(finalPresetName)
+    LoadPresetIntoUI(finalPresetName, true)
     return true, nil
 end
 
@@ -1861,6 +2141,9 @@ local function IsHelpCommand(messageText)
     if normalizedIncomingMessage == NormalizeCommandText(CONST.HELP_COMMAND_SECONDARY) then
         return true
     end
+    if normalizedIncomingMessage == NormalizeCommandText(CONST.HELP_COMMAND_TERTIARY) then
+        return true
+    end
     return false
 end
 
@@ -1876,7 +2159,7 @@ local function GetCommandListMessages()
     end
 
     if not presetData or not presetData.commands then
-        resultMessages[1] = "There are no saved commands in this preset."
+        resultMessages[1] = "Available commands:"
         return resultMessages
     end
 
@@ -1892,13 +2175,9 @@ local function GetCommandListMessages()
     end
 
     if #commandNames == 0 then
-        resultMessages[1] = "There are no saved commands in this preset."
+        resultMessages[1] = "Available commands:"
         return resultMessages
     end
-
-    table.sort(commandNames, function(leftValue, rightValue)
-        return string.lower(leftValue) < string.lower(rightValue)
-    end)
 
     local prefix = "Available commands: "
     local currentMessage = prefix
@@ -2036,19 +2315,31 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         STATE.defaultResponseThrottleBySender[senderName] = currentTime
     end
 
-    SendChatMessage(responseText, "WHISPER", nil, senderName)
-
     if isDefaultResponse then
-        SendChatMessage(CONST.COMMAND_HELP_GUIDE_MESSAGE, "WHISPER", nil, senderName)
+        local firstMessage = LimitTextLength(tostring(responseText or "") .. CONST.DEFAULT_RESPONSE_HELP_SUFFIX, CONST.CHAT_MESSAGE_MAX_LENGTH)
+        SendChatMessage(firstMessage, "WHISPER", nil, senderName)
+
+        local commandMessages = GetCommandListMessages()
+        SendWhisperMessageList(senderName, commandMessages)
+    else
+        SendChatMessage(responseText, "WHISPER", nil, senderName)
     end
 end)
 
 loader:RegisterEvent("ADDON_LOADED")
+loader:RegisterEvent("PLAYER_LOGOUT")
+
 loader:SetScript("OnEvent", function(self, event, arg1)
-    if arg1 == addonName then
+    if event == "ADDON_LOADED" and arg1 == addonName then
         EnsureSavedVariables()
         STATE.isAutoResponseEnabled = RTAutoResponseSave.enabled and true or false
-        self:UnregisterEvent("ADDON_LOADED")
+        RefreshAutoResponseOverlayIfAvailable()
+        return
+    end
+
+    if event == "PLAYER_LOGOUT" then
+        FlushActivePresetToSavedVariables()
+        return
     end
 end)
 
@@ -2109,7 +2400,9 @@ local function CreatePresetDropdown(parentFrame)
                         if presetName == CONST.CREATE_NEW_PRESET_LABEL then
                             CreateNewPreset()
                         else
-                            LoadPresetIntoUI(presetName)
+                            local currentPresetName = GetSelectedPresetName()
+                            local shouldDisableAutoResponse = currentPresetName ~= presetName
+                            LoadPresetIntoUI(presetName, shouldDisableAutoResponse)
                         end
                     end
                 }
@@ -2284,6 +2577,10 @@ local function BuildCommandListArea(f)
     local leftPaneLabel = leftPaneBG:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     leftPaneLabel:SetPoint("TOPLEFT", 12, -12)
     leftPaneLabel:SetText("Command List")
+
+    local dragInfoText = leftPaneBG:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    dragInfoText:SetPoint("TOPRIGHT", -12, -12)
+    dragInfoText:SetText("Right click to drag.")
 
     UI.commandScrollFrame = CreateFrame("ScrollFrame", addonName .. "AutoResponseCommandScrollFrame", leftPaneBG, "UIPanelScrollFrameTemplate")
     UI.commandScrollFrame:SetPoint("TOPLEFT", 10, -34)
@@ -2580,11 +2877,12 @@ local function BuildBottomButtons(f, onClose)
     UI.enableBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     UI.enableBtn:SetSize(170, 28)
     UI.enableBtn:SetPoint("BOTTOMRIGHT", -18, 18)
-    UI.enableBtn:SetText("Enable Auto Response")
+    UI.enableBtn:SetText("Enable Auto Reply")
     UI.enableBtn:SetScript("OnClick", function()
         STATE.isAutoResponseEnabled = not STATE.isAutoResponseEnabled
         RTAutoResponseSave.enabled = STATE.isAutoResponseEnabled and true or false
         RefreshEnableButton()
+        RefreshAutoResponseOverlayIfAvailable()
     end)
 
     UI.closeBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
@@ -2650,10 +2948,14 @@ function CreateAutoResponseTabContent(parent, onClose)
             activePresetName = CONST.DEFAULT_PRESET_NAME
         end
 
-        LoadPresetIntoUI(activePresetName)
+        LoadPresetIntoUI(activePresetName, false)
         RefreshPresetActionButtons()
         RefreshEnableButton()
         RefreshDefaultResponseControlStates()
+    end)
+
+    f:SetScript("OnHide", function()
+        StopCommandRowDrag()
     end)
 
     RefreshPresetActionButtons()

@@ -8,7 +8,7 @@ local TAB_SPACING = 95
 
 local STATUS_OVERLAY_NAME = "RTStatusOverlayFrame"
 local STATUS_OVERLAY_WIDTH = 180
-local STATUS_OVERLAY_HEIGHT = 42
+local STATUS_OVERLAY_HEIGHT = 60
 
 local STATUS_ON_TEXT = "|cff00ff00ON|r"
 local STATUS_OFF_TEXT = "|cffff3b30OFF|r"
@@ -34,7 +34,7 @@ local TAB_DEFINITIONS = {
         creator = CreateRollManagerTabContent
     },
     {
-        name = "Auto Response",
+        name = "Auto Reply",
         creator = CreateAutoResponseTabContent
     }
 }
@@ -211,7 +211,7 @@ local function CreateMainFrameIfNeeded()
 
     local titleText = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
     titleText:SetPoint("TOP", 0, -12)
-    titleText:SetText("Raid Tools")
+    titleText:SetText("Tools")
 
     CreateTabButtons(mainFrame)
 
@@ -271,6 +271,14 @@ local function IsMasterLooterEnabled()
     return RT_IsMasterLooterEnabled() and true or false
 end
 
+local function IsAutoReplyEnabled()
+    if not RT_IsAutoResponseEnabled then
+        return false
+    end
+
+    return RT_IsAutoResponseEnabled() and true or false
+end
+
 function RefreshStatusOverlay()
     if not statusOverlayFrame then
         return
@@ -282,6 +290,10 @@ function RefreshStatusOverlay()
 
     if statusOverlayFrame.masterLooterText then
         statusOverlayFrame.masterLooterText:SetText(GetModuleStatusLabel("MLooter", IsMasterLooterEnabled()))
+    end
+
+    if statusOverlayFrame.autoReplyText then
+        statusOverlayFrame.autoReplyText:SetText(GetModuleStatusLabel("AutoReply", IsAutoReplyEnabled()))
     end
 end
 
@@ -345,6 +357,13 @@ local function CreateStatusOverlayIfNeeded()
         statusOverlayFrame.spammerText,
         -18,
         GetModuleStatusLabel("MLooter", false)
+    )
+
+    statusOverlayFrame.autoReplyText = CreateStatusText(
+        statusOverlayFrame,
+        statusOverlayFrame.masterLooterText,
+        -18,
+        GetModuleStatusLabel("AutoReply", false)
     )
 
     RefreshStatusOverlay()

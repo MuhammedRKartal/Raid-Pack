@@ -4,7 +4,7 @@
 ## Author: HirohitoW
 ## Version: 1.0.0
 ## SavedVariables: RTAutoResponseSave
-## SavedVariablesPerCharacter: RTSpammerSave, RTMasterLooterSave, RTStatusOverlaySave, RTRollManagerSave, 
+## SavedVariablesPerCharacter: RTSpammerSave, RTMasterLooterSave, RTStatusOverlaySave, RTRollManagerSave
 
 ElvUI_migration.lua
 Roll_Manager.lua
