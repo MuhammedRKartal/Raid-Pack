@@ -47,7 +47,10 @@ local DATA = {
     },
 
     defaultEmbeddedPreset = {
-        message = "Need a new UI or nice Weakauras to track everything?  Come Join the Weakaura Center: https://discord.gg/7E6jAPsJD9"
+        message = "Need a new UI or nice Weakauras to track everything? Come Join the Weakaura Center: https://discord.gg/7E6jAPsJD9",
+        isDefault = true,
+        isReadOnly = true,
+        order = 0,
     },
 
     channelPool = {
@@ -62,7 +65,8 @@ local CONST = {
     CREATE_NEW_PRESET_LABEL = "Create New",
     CREATE_NEW_PRESET_BASE_NAME = "New Message",
     DEFAULT_PRESET_NAME = "Weakauras Discord",
-    DEFAULT_PRESET_MESSAGE = "Need a new UI or nice Weakauras to track everything?  Come Join the Weakaura Center: https://discord.gg/7E6jAPsJD9",
+    DEFAULT_PRESET_MESSAGE = "Need a new UI or nice Weakauras to track everything? Come Join the Weakaura Center: https://discord.gg/7E6jAPsJD9",
+    DEFAULT_PRESET_READONLY_TEXT = "Need a new UI or nice Weakauras to track everything? Come Join the Weakaura Center: https://discord.gg/7E6jAPsJD9\n(Default preset is read-only)",
     PRESET_NAME_MAX_LENGTH = 21,
 }
 
@@ -139,7 +143,9 @@ end
 CopyPresetSettings = function(source)
     local result = {
         message = "",
-        order = nil
+        order = nil,
+        isDefault = false,
+        isReadOnly = false,
     }
 
     if source then
@@ -147,6 +153,14 @@ CopyPresetSettings = function(source)
 
         if type(source.order) == "number" then
             result.order = source.order
+        end
+
+        if source.isDefault == true then
+            result.isDefault = true
+        end
+
+        if source.isReadOnly == true then
+            result.isReadOnly = true
         end
     end
 
@@ -190,8 +204,14 @@ local function EnsureSavedVariables()
         local copiedPresetData = CopyPresetSettings(presetData)
 
         if presetName == CONST.DEFAULT_PRESET_NAME then
-            copiedPresetData.order = -1
+            copiedPresetData.message = CONST.DEFAULT_PRESET_MESSAGE
+            copiedPresetData.order = 0
+            copiedPresetData.isDefault = true
+            copiedPresetData.isReadOnly = true
         else
+            copiedPresetData.isDefault = false
+            copiedPresetData.isReadOnly = false
+
             if type(presetData) == "table" and type(presetData.order) == "number" then
                 copiedPresetData.order = presetData.order
             else
@@ -203,13 +223,11 @@ local function EnsureSavedVariables()
         RTSpammerSave.presets[presetName] = copiedPresetData
     end
 
-    if not RTSpammerSave.presets[CONST.DEFAULT_PRESET_NAME] then
-        local defaultPresetData = CopyPresetSettings(DATA.defaultEmbeddedPreset)
-        defaultPresetData.order = -1
-        RTSpammerSave.presets[CONST.DEFAULT_PRESET_NAME] = defaultPresetData
-    else
-        RTSpammerSave.presets[CONST.DEFAULT_PRESET_NAME].order = -1
-    end
+    RTSpammerSave.presets[CONST.DEFAULT_PRESET_NAME] = CopyPresetSettings(DATA.defaultEmbeddedPreset)
+    RTSpammerSave.presets[CONST.DEFAULT_PRESET_NAME].message = CONST.DEFAULT_PRESET_MESSAGE
+    RTSpammerSave.presets[CONST.DEFAULT_PRESET_NAME].order = 0
+    RTSpammerSave.presets[CONST.DEFAULT_PRESET_NAME].isDefault = true
+    RTSpammerSave.presets[CONST.DEFAULT_PRESET_NAME].isReadOnly = true
 
     local characterKey = GetCharacterKey()
 
@@ -231,6 +249,76 @@ local function EnsureSavedVariables()
     if RTSpammerSave.activePresetName ~= nil and type(RTSpammerSave.activePresetName) ~= "string" then
         RTSpammerSave.activePresetName = nil
     end
+end
+
+local function GetPresetData(presetName)
+    EnsureSavedVariables()
+
+    if type(presetName) ~= "string" or presetName == "" then
+        return nil
+    end
+
+    if not RTSpammerSave.presets then
+        return nil
+    end
+
+    return RTSpammerSave.presets[presetName]
+end
+
+local function IsDefaultPreset(presetName)
+    local presetData = GetPresetData(presetName)
+
+    if not presetData then
+        return false
+    end
+
+    return presetData.isDefault == true
+end
+
+local function IsPresetReadOnly(presetName)
+    local presetData = GetPresetData(presetName)
+
+    if not presetData then
+        return false
+    end
+
+    return presetData.isReadOnly == true
+end
+
+local function CanRenamePreset(presetName)
+    if type(presetName) ~= "string" or presetName == "" then
+        return false
+    end
+
+    if presetName == CONST.CREATE_NEW_PRESET_LABEL then
+        return false
+    end
+
+    return GetPresetData(presetName) ~= nil and not IsPresetReadOnly(presetName)
+end
+
+local function CanDeletePreset(presetName)
+    if type(presetName) ~= "string" or presetName == "" then
+        return false
+    end
+
+    if presetName == CONST.CREATE_NEW_PRESET_LABEL then
+        return false
+    end
+
+    return GetPresetData(presetName) ~= nil and not IsDefaultPreset(presetName)
+end
+
+local function CanSavePreset(presetName)
+    if type(presetName) ~= "string" or presetName == "" then
+        return false
+    end
+
+    if presetName == CONST.CREATE_NEW_PRESET_LABEL then
+        return false
+    end
+
+    return GetPresetData(presetName) ~= nil and not IsPresetReadOnly(presetName)
 end
 
 local function GetCharacterActivePresetName()
@@ -273,7 +361,7 @@ local function SetCharacterActivePresetName(presetName)
     if type(presetName) == "string" and presetName ~= "" and RTSpammerSave.presets[presetName] then
         RTSpammerSave.characterSettings[characterKey].activePresetName = presetName
     else
-        RTSpammerSave.characterSettings[characterKey].activePresetName = nil
+        RTSpammerSave.characterSettings[characterKey].activePresetName = CONST.DEFAULT_PRESET_NAME
     end
 end
 
@@ -304,39 +392,40 @@ local function StopSpammingState()
 end
 
 local function GetSavedMessageForCurrentSelection()
-    EnsureSavedVariables()
-
     local presetName = GetSelectedPresetName()
+    local presetData = GetPresetData(presetName)
 
-    if presetName and presetName ~= "" and presetName ~= CONST.CREATE_NEW_PRESET_LABEL then
-        if RTSpammerSave.presets[presetName] then
-            return RTSpammerSave.presets[presetName].message or ""
-        end
-    end
-
-    return ""
-end
-
-local function GetMessageToSend()
-    EnsureSavedVariables()
-
-    local presetName = GetCharacterActivePresetName()
-
-    if presetName and presetName ~= "" and presetName ~= CONST.CREATE_NEW_PRESET_LABEL then
-        local presetData = RTSpammerSave.presets[presetName]
-
-        if presetData and (presetData.message or "") ~= "" then
-            return presetData.message or ""
-        end
-
+    if not presetData then
         return ""
     end
 
-    return ""
+    if IsPresetReadOnly(presetName) then
+        return CONST.DEFAULT_PRESET_READONLY_TEXT
+    end
+
+    return presetData.message or ""
+end
+
+local function GetMessageToSend()
+    local presetName = GetCharacterActivePresetName()
+    local presetData = GetPresetData(presetName)
+
+    if not presetData then
+        return ""
+    end
+
+    return presetData.message or ""
 end
 
 local function UpdateMessageDirtyState()
     if not UI.msgLabel then
+        return
+    end
+
+    local presetName = GetSelectedPresetName()
+
+    if IsPresetReadOnly(presetName) then
+        UI.msgLabel:SetText("Message to Spam:")
         return
     end
 
@@ -437,6 +526,21 @@ local function ShowSavedFeedback()
     STATE.saveFeedbackResetAt = GetTime() + 3
 end
 
+local function SetMessageEditBoxReadOnly(isReadOnly)
+    if not UI.msgEditBox then
+        return
+    end
+
+    if isReadOnly then
+        UI.msgEditBox:ClearFocus()
+        UI.msgEditBox:EnableMouse(false)
+        UI.msgEditBox:SetTextColor(0.6, 0.6, 0.6)
+    else
+        UI.msgEditBox:EnableMouse(true)
+        UI.msgEditBox:SetTextColor(1, 1, 1)
+    end
+end
+
 local loader = CreateFrame("Frame")
 loader:RegisterEvent("ADDON_LOADED")
 loader:SetScript("OnEvent", function(self, event, arg1)
@@ -466,31 +570,15 @@ local function LimitTextLength(text, maxLength)
     return result
 end
 
-local function IsProtectedPreset(presetName)
-    if presetName == CONST.DEFAULT_PRESET_NAME then
-        return true
-    end
-
-    return false
-end
-
 ------------------------------------------------------------
 -- UI STATE REFRESH
 ------------------------------------------------------------
 
 local function RefreshPresetActionButtons()
     local presetName = STATE.selectedPresetName
-    local canRenameOrDelete = false
-    local canSave = false
-
-    EnsureSavedVariables()
-
-    if presetName and presetName ~= "" and presetName ~= CONST.CREATE_NEW_PRESET_LABEL and RTSpammerSave.presets[presetName] then
-        if not IsProtectedPreset(presetName) then
-            canRenameOrDelete = true
-            canSave = true
-        end
-    end
+    local canRename = CanRenamePreset(presetName)
+    local canDelete = CanDeletePreset(presetName)
+    local canSave = CanSavePreset(presetName)
 
     if UI.savePresetBtn then
         if canSave then
@@ -503,7 +591,7 @@ local function RefreshPresetActionButtons()
     end
 
     if UI.renamePresetBtn then
-        if canRenameOrDelete then
+        if canRename then
             UI.renamePresetBtn:Enable()
         else
             UI.renamePresetBtn:Disable()
@@ -511,7 +599,7 @@ local function RefreshPresetActionButtons()
     end
 
     if UI.deletePresetBtn then
-        if canRenameOrDelete then
+        if canDelete then
             UI.deletePresetBtn:Enable()
         else
             UI.deletePresetBtn:Disable()
@@ -526,7 +614,7 @@ end
 local function SetSelectedPresetName(presetName)
     STATE.selectedPresetName = presetName
 
-    if presetName and presetName ~= "" and presetName ~= CONST.CREATE_NEW_PRESET_LABEL and RTSpammerSave and RTSpammerSave.presets and RTSpammerSave.presets[presetName] then
+    if presetName and presetName ~= "" and presetName ~= CONST.CREATE_NEW_PRESET_LABEL and GetPresetData(presetName) then
         SetCharacterActivePresetName(presetName)
     end
 
@@ -547,9 +635,7 @@ GetSelectedPresetName = function()
     if type(presetName) == "string"
         and presetName ~= ""
         and presetName ~= CONST.CREATE_NEW_PRESET_LABEL
-        and RTSpammerSave
-        and RTSpammerSave.presets
-        and RTSpammerSave.presets[presetName] then
+        and GetPresetData(presetName) then
         return presetName
     end
 
@@ -566,11 +652,11 @@ local function GetSortedPresetNames()
     end
 
     table.sort(presetNames, function(leftValue, rightValue)
-        local leftPreset = RTSpammerSave.presets[leftValue]
-        local rightPreset = RTSpammerSave.presets[rightValue]
+        local leftPreset = GetPresetData(leftValue)
+        local rightPreset = GetPresetData(rightValue)
 
-        local leftOrder = -1
-        local rightOrder = -1
+        local leftOrder = 0
+        local rightOrder = 0
 
         if leftPreset and type(leftPreset.order) == "number" then
             leftOrder = leftPreset.order
@@ -706,12 +792,18 @@ local function ApplyPresetMessageToUI(presetData)
         return
     end
 
-    if presetData then
+    local presetName = GetSelectedPresetName()
+    local isReadOnly = IsPresetReadOnly(presetName)
+
+    if isReadOnly then
+        UI.msgEditBox:SetText(CONST.DEFAULT_PRESET_READONLY_TEXT)
+    elseif presetData then
         UI.msgEditBox:SetText(presetData.message or "")
     else
         UI.msgEditBox:SetText("")
     end
 
+    SetMessageEditBoxReadOnly(isReadOnly)
     UpdateMessageDirtyState()
 end
 
@@ -749,19 +841,7 @@ local function SaveActivePreset()
 
     local presetName = GetSelectedPresetName()
 
-    if not presetName or presetName == "" then
-        return
-    end
-
-    if presetName == CONST.CREATE_NEW_PRESET_LABEL then
-        return
-    end
-
-    if IsProtectedPreset(presetName) then
-        return
-    end
-
-    if not RTSpammerSave.presets[presetName] then
+    if not CanSavePreset(presetName) then
         return
     end
 
@@ -773,7 +853,9 @@ local function SaveActivePreset()
 
     RTSpammerSave.presets[presetName] = CopyPresetSettings({
         message = currentMessage,
-        order = RTSpammerSave.presets[presetName] and RTSpammerSave.presets[presetName].order or nil
+        order = RTSpammerSave.presets[presetName] and RTSpammerSave.presets[presetName].order or nil,
+        isDefault = false,
+        isReadOnly = false,
     })
 
     SetCharacterActivePresetName(presetName)
@@ -791,7 +873,9 @@ local function CreateNewPreset()
 
     RTSpammerSave.presets[presetName] = CopyPresetSettings({
         message = "",
-        order = RTSpammerSave.presetOrderCounter
+        order = RTSpammerSave.presetOrderCounter,
+        isDefault = false,
+        isReadOnly = false,
     })
 
     SetCharacterActivePresetName(presetName)
@@ -814,7 +898,7 @@ local function LoadPreset(presetName)
 
     EnsureSavedVariables()
 
-    if not RTSpammerSave.presets[presetName] then
+    if not GetPresetData(presetName) then
         return
     end
 
@@ -825,28 +909,15 @@ local function LoadPreset(presetName)
     StopRenameMode()
 
     LoadCurrentSettingsToUI()
-    ApplyPresetMessageToUI(RTSpammerSave.presets[presetName])
+    ApplyPresetMessageToUI(GetPresetData(presetName))
 end
 
 local function DeletePreset(presetName)
-    if not presetName or presetName == "" then
+    if not CanDeletePreset(presetName) then
         return
     end
 
     EnsureSavedVariables()
-
-    if presetName == CONST.CREATE_NEW_PRESET_LABEL then
-        return
-    end
-
-    if IsProtectedPreset(presetName) then
-        return
-    end
-
-    if not RTSpammerSave.presets[presetName] then
-        return
-    end
-
     DisableSpammingOnly()
 
     RTSpammerSave.presets[presetName] = nil
@@ -855,14 +926,15 @@ local function DeletePreset(presetName)
     if RTSpammerSave.characterSettings
         and RTSpammerSave.characterSettings[characterKey]
         and RTSpammerSave.characterSettings[characterKey].activePresetName == presetName then
-        RTSpammerSave.characterSettings[characterKey].activePresetName = nil
+        RTSpammerSave.characterSettings[characterKey].activePresetName = CONST.DEFAULT_PRESET_NAME
     end
 
-    SetSelectedPresetName(nil)
+    SetCharacterActivePresetName(CONST.DEFAULT_PRESET_NAME)
+    SetSelectedPresetName(CONST.DEFAULT_PRESET_NAME)
     StopRenameMode()
 
     LoadCurrentSettingsToUI()
-    ApplyPresetMessageToUI(nil)
+    ApplyPresetMessageToUI(GetPresetData(CONST.DEFAULT_PRESET_NAME))
 end
 
 StaticPopupDialogs[CONST.SPAMMER_PRESET_DELETE_POPUP] = {
@@ -880,23 +952,7 @@ StaticPopupDialogs[CONST.SPAMMER_PRESET_DELETE_POPUP] = {
 }
 
 local function IsRenameBlocked(presetName)
-    if not presetName or presetName == "" then
-        return true
-    end
-
-    if presetName == CONST.CREATE_NEW_PRESET_LABEL then
-        return true
-    end
-
-    if IsProtectedPreset(presetName) then
-        return true
-    end
-
-    if not RTSpammerSave.presets[presetName] then
-        return true
-    end
-
-    return false
+    return not CanRenamePreset(presetName)
 end
 
 local function StartRenameMode()
@@ -954,6 +1010,9 @@ local function RenameSelectedPreset(newName)
     if type(RTSpammerSave.presets[oldName]) == "table" and type(RTSpammerSave.presets[oldName].order) == "number" then
         RTSpammerSave.presets[finalName].order = RTSpammerSave.presets[oldName].order
     end
+
+    RTSpammerSave.presets[finalName].isDefault = false
+    RTSpammerSave.presets[finalName].isReadOnly = false
 
     RTSpammerSave.presets[oldName] = nil
     SetCharacterActivePresetName(finalName)
@@ -1056,6 +1115,12 @@ local function IsMessageBoxActive()
 end
 
 local function InsertLinkIntoMessageBox(link)
+    local presetName = GetSelectedPresetName()
+
+    if IsPresetReadOnly(presetName) then
+        return false
+    end
+
     if not IsMessageBoxActive() then
         return false
     end
@@ -1200,15 +1265,7 @@ function CreateSpammerTabContent(parent, onClose)
     UI.deletePresetBtn:SetScript("OnClick", function()
         local presetName = GetSelectedPresetName()
 
-        if not presetName or presetName == "" then
-            return
-        end
-
-        if presetName == CONST.CREATE_NEW_PRESET_LABEL then
-            return
-        end
-
-        if IsProtectedPreset(presetName) then
+        if not CanDeletePreset(presetName) then
             return
         end
 
@@ -1259,10 +1316,24 @@ function CreateSpammerTabContent(parent, onClose)
     end)
 
     UI.msgEditBox:SetScript("OnMouseDown", function(self)
+        local presetName = GetSelectedPresetName()
+
+        if IsPresetReadOnly(presetName) then
+            self:ClearFocus()
+            return
+        end
+
         self:SetFocus()
     end)
 
     UI.msgEditBox:SetScript("OnEditFocusGained", function(self)
+        local presetName = GetSelectedPresetName()
+
+        if IsPresetReadOnly(presetName) then
+            self:ClearFocus()
+            return
+        end
+
         self:SetFocus()
     end)
 
@@ -1372,12 +1443,12 @@ function CreateSpammerTabContent(parent, onClose)
 
         local presetName = GetCharacterActivePresetName()
 
-        if presetName and RTSpammerSave.presets[presetName] then
+        if presetName and GetPresetData(presetName) then
             SetSelectedPresetName(presetName)
-            ApplyPresetMessageToUI(RTSpammerSave.presets[presetName])
+            ApplyPresetMessageToUI(GetPresetData(presetName))
         else
-            SetSelectedPresetName(nil)
-            ApplyPresetMessageToUI(nil)
+            SetSelectedPresetName(CONST.DEFAULT_PRESET_NAME)
+            ApplyPresetMessageToUI(GetPresetData(CONST.DEFAULT_PRESET_NAME))
         end
 
         StopRenameMode()
