@@ -533,6 +533,23 @@ local function FlushActivePresetToSavedVariables()
     end
 
     if presetName == CONST.CREATE_NEW_PRESET_LABEL then
+        RTAutoResponseSave.enabled = STATE.isAutoResponseEnabled and true or false
+        return
+    end
+
+    local characterKey = GetCharacterKey()
+    if type(RTAutoResponseSave.characterSettings) ~= "table" then
+        RTAutoResponseSave.characterSettings = {}
+    end
+    if type(RTAutoResponseSave.characterSettings[characterKey]) ~= "table" then
+        RTAutoResponseSave.characterSettings[characterKey] = {}
+    end
+
+    RTAutoResponseSave.characterSettings[characterKey].activePresetName = presetName
+    RTAutoResponseSave.activePresetName = presetName
+    RTAutoResponseSave.enabled = STATE.isAutoResponseEnabled and true or false
+
+    if presetName == CONST.DEFAULT_PRESET_NAME then
         return
     end
 
@@ -581,17 +598,6 @@ local function FlushActivePresetToSavedVariables()
 
     presetData.commands = newCommands
 
-    local characterKey = GetCharacterKey()
-    if type(RTAutoResponseSave.characterSettings) ~= "table" then
-        RTAutoResponseSave.characterSettings = {}
-    end
-    if type(RTAutoResponseSave.characterSettings[characterKey]) ~= "table" then
-        RTAutoResponseSave.characterSettings[characterKey] = {}
-    end
-
-    RTAutoResponseSave.characterSettings[characterKey].activePresetName = presetName
-    RTAutoResponseSave.activePresetName = presetName
-    RTAutoResponseSave.enabled = STATE.isAutoResponseEnabled and true or false
 end
 
 ------------------------------------------------------------

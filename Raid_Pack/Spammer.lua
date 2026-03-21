@@ -179,7 +179,7 @@ local function BuildDefaultPresetData()
         message = CONST.DEFAULT_PRESET_MESSAGE,
         intervals = CopyIntervals(nil),
         enabledChannels = CopyEnabledChannels(nil),
-        order = 0,
+        order = -1,
         isDefault = true,
         isReadOnly = true,
     }
@@ -229,24 +229,20 @@ local function NormalizePresets()
     local migratedPresets = {}
 
     for presetName, presetData in pairs(RTSpammerSave.presets) do
-        if type(presetName) == "string" and presetName ~= "" then
+        if type(presetName) == "string" and presetName ~= "" and presetName ~= CONST.DEFAULT_PRESET_NAME then
             local normalizedPresetData = CopyPresetData(presetData)
 
-            if presetName == CONST.DEFAULT_PRESET_NAME then
-                normalizedPresetData = BuildDefaultPresetData()
-            else
-                normalizedPresetData.isDefault = false
-                normalizedPresetData.isReadOnly = false
+            normalizedPresetData.isDefault = false
+            normalizedPresetData.isReadOnly = false
 
-                if type(normalizedPresetData.order) ~= "number" then
-                    RTSpammerSave.presetOrderCounter = RTSpammerSave.presetOrderCounter + 1
-                    normalizedPresetData.order = RTSpammerSave.presetOrderCounter
-                end
+            if type(normalizedPresetData.order) ~= "number" then
+                RTSpammerSave.presetOrderCounter = RTSpammerSave.presetOrderCounter + 1
+                normalizedPresetData.order = RTSpammerSave.presetOrderCounter
+            end
 
-                if type(presetData) == "table" and type(presetData.intervals) ~= "table" and type(RTSpammerSave.current) == "table" then
-                    normalizedPresetData.intervals = CopyIntervals(RTSpammerSave.current.intervals)
-                    normalizedPresetData.enabledChannels = CopyEnabledChannels(RTSpammerSave.current.enabledChannels)
-                end
+            if type(presetData) == "table" and type(presetData.intervals) ~= "table" and type(RTSpammerSave.current) == "table" then
+                normalizedPresetData.intervals = CopyIntervals(RTSpammerSave.current.intervals)
+                normalizedPresetData.enabledChannels = CopyEnabledChannels(RTSpammerSave.current.enabledChannels)
             end
 
             migratedPresets[presetName] = normalizedPresetData
@@ -373,7 +369,10 @@ end
 
 local function StopSpamming(resetCooldowns)
     STATE.isSpamming = false
-    RefreshStatusOverlay()
+
+    if RefreshStatusOverlay then
+        RefreshStatusOverlay()
+    end
 
     if UI.startBtn then
         UI.startBtn:SetText("Start Spamming")
@@ -590,6 +589,28 @@ local function RefreshAvailableChannels()
     end
 end
 
+local RefreshPresetActionButtons
+
+local function RefreshChannelsAndPreserveUI()
+    if not UI.channelRows or #UI.channelRows == 0 then
+        return
+    end
+
+    RefreshAvailableChannels()
+
+    if UI.startBtn and RefreshStatusOverlay then
+        RefreshStatusOverlay()
+    end
+
+    if UI.savePresetBtn then
+        RefreshPresetActionButtons()
+    end
+
+    if UI.msgEditBox then
+        UpdateMessageDirtyState()
+    end
+end
+
 ------------------------------------------------------------
 -- PRESET <-> UI HELPERS
 ------------------------------------------------------------
@@ -732,11 +753,10 @@ local function ApplyPresetToUI(presetData)
     UpdateMessageDirtyState()
 end
 
-
 local function ReadPresetDataFromUI(basePresetData)
     local result = CopyPresetData(basePresetData)
 
-    if UI.msgEditBox then
+    if UI.msgEditBox and not result.isReadOnly then
         result.message = UI.msgEditBox:GetText() or ""
     end
 
@@ -796,7 +816,7 @@ local function IsPresetDirty()
     return false
 end
 
-local function RefreshPresetActionButtons()
+RefreshPresetActionButtons = function()
     local presetName = STATE.selectedPresetName
     local canRename = CanRenamePreset(presetName)
     local canDelete = CanDeletePreset(presetName)
@@ -852,7 +872,6 @@ local function SetSelectedPresetName(presetName)
     RefreshPresetActionButtons()
     UpdateMessageDirtyState()
 end
-
 
 local function SaveActivePreset()
     EnsureSavedVariables()
@@ -1408,6 +1427,21 @@ function CreateSpammerTabContent(parent, onClose)
         UI.channelRows[i] = row
     end
 
+    eventFrame:UnregisterAllEvents()
+    eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    eventFrame:RegisterEvent("CHANNEL_UI_UPDATE")
+    eventFrame:RegisterEvent("CHAT_MSG_CHANNEL_NOTICE")
+    eventFrame:RegisterEvent("CHAT_MSG_CHANNEL_NOTICE_USER")
+
+    eventFrame:SetScript("OnEvent", function(self, event)
+        if event == "PLAYER_ENTERING_WORLD"
+            or event == "CHANNEL_UI_UPDATE"
+            or event == "CHAT_MSG_CHANNEL_NOTICE"
+            or event == "CHAT_MSG_CHANNEL_NOTICE_USER" then
+            RefreshChannelsAndPreserveUI()
+        end
+    end)
+
     eventFrame:SetScript("OnUpdate", function(self, elapsed)
         STATE.uiUpdateAccumulator = STATE.uiUpdateAccumulator + elapsed
 
@@ -1501,7 +1535,9 @@ function CreateSpammerTabContent(parent, onClose)
             end
 
             STATE.isSpamming = true
-            RefreshStatusOverlay()
+            if RefreshStatusOverlay then
+                RefreshStatusOverlay()
+            end
             UI.startBtn:SetText("|cff00ff00Enabled|r")
 
             local now = GetTime()
