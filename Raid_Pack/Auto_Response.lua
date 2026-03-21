@@ -15,7 +15,7 @@ local STATE = {
     presetTransferMode = nil,
     defaultResponseThrottleBySender = {},
     draggedCommandRow = nil,
-    isDraggingCommandRow = false,
+    isDraggingCommandRow = false
 }
 
 local UI = {
@@ -203,6 +203,41 @@ local function EscapeLuaString(text)
     return string.format("%q", tostring(text or ""))
 end
 
+local function EncodeTransferValue(text)
+    local sourceText = tostring(text or "")
+    return (string.gsub(sourceText, ".", function(character)
+        return string.format("%02X", string.byte(character))
+    end))
+end
+
+local function DecodeTransferValue(text)
+    local sourceText = tostring(text or "")
+
+    if sourceText == "" then
+        return ""
+    end
+
+    if string.len(sourceText) % 2 ~= 0 then
+        return nil
+    end
+
+    local decodedParts = {}
+    local index = 1
+
+    while index <= string.len(sourceText) do
+        local pairText = string.sub(sourceText, index, index + 1)
+
+        if not string.find(pairText, "^[0-9A-Fa-f][0-9A-Fa-f]$") then
+            return nil
+        end
+
+        decodedParts[#decodedParts + 1] = string.char(tonumber(pairText, 16))
+        index = index + 2
+    end
+
+    return table.concat(decodedParts)
+end
+
 ------------------------------------------------------------
 -- UI HELPERS
 ------------------------------------------------------------
@@ -256,12 +291,15 @@ local function SetEditBoxInteractionEnabled(editBox, isEnabled)
 end
 
 local function SetEditBoxReadOnly(editBox, isReadOnly)
-    if not editBox then
-        return
-    end
+    if not editBox then return end
 
-    editBox.isReadOnly = isReadOnly and true or false
-    editBox.lastReadOnlyText = tostring(editBox:GetText() or "")
+    if isReadOnly then
+        editBox.isReadOnly = true
+        editBox.lastReadOnlyText = tostring(editBox:GetText() or "")
+    else
+        editBox.isReadOnly = false
+        editBox.lastReadOnlyText = nil
+    end
 
     if editBox.EnableKeyboard then
         editBox:EnableKeyboard(true)
@@ -401,23 +439,29 @@ local function EnsureSavedVariables()
     end
 
     for presetName, presetData in pairs(RTAutoResponseSave.presets) do
-        if presetName ~= CONST.DEFAULT_PRESET_NAME then
-            local copiedPresetData = CopyPresetData(presetData)
+        local copiedPresetData = CopyPresetData(presetData)
 
+        if presetName == CONST.DEFAULT_PRESET_NAME then
+            copiedPresetData.order = -1
+        else
             if type(presetData) == "table" and type(presetData.order) == "number" then
                 copiedPresetData.order = presetData.order
             else
                 RTAutoResponseSave.presetOrderCounter = RTAutoResponseSave.presetOrderCounter + 1
                 copiedPresetData.order = RTAutoResponseSave.presetOrderCounter
             end
-
-            RTAutoResponseSave.presets[presetName] = copiedPresetData
         end
+
+        RTAutoResponseSave.presets[presetName] = copiedPresetData
     end
 
-    local defaultPresetData = CopyPresetData(DEFAULT_PRESET_TEMPLATE)
-    defaultPresetData.order = -1
-    RTAutoResponseSave.presets[CONST.DEFAULT_PRESET_NAME] = defaultPresetData
+    if not RTAutoResponseSave.presets[CONST.DEFAULT_PRESET_NAME] then
+        local defaultPresetData = CopyPresetData(DEFAULT_PRESET_TEMPLATE)
+        defaultPresetData.order = -1
+        RTAutoResponseSave.presets[CONST.DEFAULT_PRESET_NAME] = defaultPresetData
+    else
+        RTAutoResponseSave.presets[CONST.DEFAULT_PRESET_NAME].order = -1
+    end
 
     if not RTAutoResponseSave.activePresetName
         or RTAutoResponseSave.activePresetName == ""
@@ -452,20 +496,23 @@ local function FlushActivePresetToSavedVariables()
 
     local presetData = RTAutoResponseSave.presets[presetName]
 
-    if not UI.defaultResponseEditBox or not DATA.commandRows then
-        RTAutoResponseSave.activePresetName = presetName
-        RTAutoResponseSave.enabled = STATE.isAutoResponseEnabled and true or false
-        return
+    if UI.defaultResponseEditBox then
+        presetData.defaultResponse = LimitTextLength(UI.defaultResponseEditBox:GetText() or "", CONST.RESPONSE_MAX_LENGTH)
+    else
+        presetData.defaultResponse = LimitTextLength(presetData.defaultResponse or "", CONST.RESPONSE_MAX_LENGTH)
     end
 
-    presetData.defaultResponse = LimitTextLength(UI.defaultResponseEditBox:GetText() or "", CONST.RESPONSE_MAX_LENGTH)
+    local sourceRows = DATA.commandRows
+    if type(sourceRows) ~= "table" or #sourceRows == 0 then
+        sourceRows = presetData.commands or {}
+    end
 
     local newCommands = {}
     local saveIndex = 1
     local rowIndex = 1
 
-    while rowIndex <= #DATA.commandRows do
-        local row = DATA.commandRows[rowIndex]
+    while rowIndex <= #sourceRows do
+        local row = sourceRows[rowIndex]
 
         if row and not row.isDeleted and not row.isSystemCommand then
             local sanitizedCommand = SanitizeCommandText(row.command or "")
@@ -717,36 +764,26 @@ local function GetCommandRowIndex(targetRow)
     return nil
 end
 
-local function MoveCommandRowToIndex(sourceRow, targetIndex)
-    local sourceIndex = GetCommandRowIndex(sourceRow)
-
-    if not sourceIndex then
-        return
+local function SwapCommandRows(firstRow, secondRow)
+    if not firstRow or not secondRow then
+        return false
     end
 
-    if targetIndex < 1 then
-        targetIndex = 1
+    if firstRow == secondRow then
+        return false
     end
 
-    local originalTargetIndex = targetIndex
+    local firstIndex = GetCommandRowIndex(firstRow)
+    local secondIndex = GetCommandRowIndex(secondRow)
 
-    table.remove(DATA.commandRows, sourceIndex)
-
-    local maxInsertIndex = #DATA.commandRows + 1
-
-    if targetIndex > maxInsertIndex then
-        targetIndex = maxInsertIndex
+    if not firstIndex or not secondIndex then
+        return false
     end
 
-    if sourceIndex < originalTargetIndex and targetIndex < maxInsertIndex then
-        targetIndex = targetIndex - 1
-    end
+    DATA.commandRows[firstIndex], DATA.commandRows[secondIndex] =
+        DATA.commandRows[secondIndex], DATA.commandRows[firstIndex]
 
-    if targetIndex < 1 then
-        targetIndex = 1
-    end
-
-    table.insert(DATA.commandRows, targetIndex, sourceRow)
+    return true
 end
 
 local function DoesCommandExist(commandText, ignoredRow)
@@ -839,7 +876,8 @@ end
 local function RefreshPresetActionButtons()
     local presetName = STATE.selectedPresetName
     local canRenameOrDelete = false
-    local canImportOrExport = false
+    local canImport = false
+    local canExport = false
 
     EnsureSavedVariables()
 
@@ -848,42 +886,34 @@ local function RefreshPresetActionButtons()
         and presetName ~= CONST.CREATE_NEW_PRESET_LABEL
         and RTAutoResponseSave.presets[presetName] then
 
+        canExport = false
+        canImport = true
+
         if not IsProtectedPreset(presetName) then
             canRenameOrDelete = true
-            canImportOrExport = true
+            canExport = true
         end
+
     end
 
     if UI.renamePresetBtn then
-        if canRenameOrDelete then
-            UI.renamePresetBtn:Enable()
-        else
-            UI.renamePresetBtn:Disable()
-        end
+        if canRenameOrDelete then UI.renamePresetBtn:Enable()
+        else UI.renamePresetBtn:Disable() end
     end
 
     if UI.deletePresetBtn then
-        if canRenameOrDelete then
-            UI.deletePresetBtn:Enable()
-        else
-            UI.deletePresetBtn:Disable()
-        end
+        if canRenameOrDelete then UI.deletePresetBtn:Enable()
+        else UI.deletePresetBtn:Disable() end
     end
 
     if UI.importPresetBtn then
-        if canImportOrExport then
-            UI.importPresetBtn:Enable()
-        else
-            UI.importPresetBtn:Disable()
-        end
+        if canImport then UI.importPresetBtn:Enable()
+        else UI.importPresetBtn:Disable() end
     end
 
     if UI.exportPresetBtn then
-        if canImportOrExport then
-            UI.exportPresetBtn:Enable()
-        else
-            UI.exportPresetBtn:Disable()
-        end
+        if canExport then UI.exportPresetBtn:Enable()
+        else UI.exportPresetBtn:Disable() end
     end
 end
 
@@ -1421,13 +1451,16 @@ local function RefreshCommandDragVisuals()
         if button then
             RefreshCommandListButtonText(button)
 
+            local text = button:GetText() or ""
+            text = text:gsub("^<<%s*", "")
+            text = text:gsub("%s*>>$", "")
+            text = text:gsub("^%[%[%s*", "")
+            text = text:gsub("%s*%]%]$", "")
+
             if STATE.isDraggingCommandRow and button.row == STATE.draggedCommandRow then
-                local text = button:GetText() or ""
-
-                text = text:gsub("^<<%s*", "")
-                text = text:gsub("%s*>>$", "")
-
                 button:SetText("<< " .. text .. " >>")
+            elseif STATE.isDraggingCommandRow and STATE.dragHoverTargetRow and button.row == STATE.dragHoverTargetRow and button.row ~= STATE.draggedCommandRow then
+                button:SetText("[[ " .. text .. " ]]")
             end
         end
 
@@ -1490,71 +1523,62 @@ local function RefreshCommandListUI()
         RefreshCommandListButtonText(button)
 
         button:SetScript("OnClick", function(self, mouseButton)
-            if mouseButton == "LeftButton" then
-                if self.row then
-                    SelectCommandRow(self.row)
+            local row = self.row
+
+            if not row then
+                return
+            end
+
+            if row.isSystemCommand or row.isDeleted then
+                if STATE.isDraggingCommandRow then
+                    StopCommandRowDrag()
                 end
                 return
             end
 
-            if mouseButton == "RightButton" then
-                if not IsCurrentPresetEditable() then
+            if not IsCurrentPresetEditable() then
+                if mouseButton == "LeftButton" then
+                    SelectCommandRow(row)
+                end
+                return
+            end
+
+            -- Drag/swap mode aktifse, başka bir row'a sağ veya sol tık swap yapsın
+            if STATE.isDraggingCommandRow and STATE.draggedCommandRow then
+                if STATE.draggedCommandRow == row then
+                    if mouseButton == "RightButton" then
+                        StopCommandRowDrag()
+                    else
+                        SelectCommandRow(row)
+                    end
                     return
                 end
 
-                if not self.row or self.row.isDeleted or self.row.isSystemCommand then
-                    return
-                end
-
-                if STATE.isDraggingCommandRow and STATE.draggedCommandRow == self.row then
+                if SwapCommandRows(STATE.draggedCommandRow, row) then
+                    FlushActivePresetToSavedVariables()
                     StopCommandRowDrag()
-                    return
+                    RefreshCommandListUI()
+                    SelectCommandRow(row)
+                else
+                    StopCommandRowDrag()
                 end
+                return
+            end
 
-                StartCommandRowDrag(self.row)
+            -- Normal davranış
+            if mouseButton == "LeftButton" then
+                SelectCommandRow(row)
+                return
+            end
+
+            if mouseButton == "RightButton" then
+                StartCommandRowDrag(row)
+                return
             end
         end)
 
         button:SetScript("OnMouseDown", nil)
         button:SetScript("OnMouseUp", nil)
-
-        button:SetScript("OnEnter", function(self)
-            if not STATE.isDraggingCommandRow then
-                return
-            end
-
-            if not STATE.draggedCommandRow then
-                return
-            end
-
-            if not IsCurrentPresetEditable() then
-                return
-            end
-
-            if self.row == STATE.draggedCommandRow then
-                return
-            end
-
-            if self.row and self.row.isSystemCommand then
-                MoveCommandRowToIndex(STATE.draggedCommandRow, #DATA.commandRows + 1)
-                FlushActivePresetToSavedVariables()
-                RefreshCommandListUI()
-                return
-            end
-
-            if not self.row or self.row.isDeleted then
-                return
-            end
-
-            local targetIndex = GetCommandRowIndex(self.row)
-            if not targetIndex then
-                return
-            end
-
-            MoveCommandRowToIndex(STATE.draggedCommandRow, targetIndex)
-            FlushActivePresetToSavedVariables()
-            RefreshCommandListUI()
-        end)
 
         index = index + 1
     end
@@ -1580,12 +1604,6 @@ local function RefreshCommandListUI()
     end
 
     UI.commandContentFrame:SetHeight(totalHeight)
-
-    UI.commandContentFrame:SetScript("OnMouseUp", function(self, mouseButton)
-        if mouseButton == "RightButton" then
-            StopCommandRowDrag()
-        end
-    end)
 
     RefreshCommandButtonSelection()
     RefreshCommandDragVisuals()
@@ -1873,8 +1891,40 @@ end
 -- IMPORT / EXPORT
 ------------------------------------------------------------
 
+local function ParseTransferRecord(line)
+    local normalizedLine = tostring(line or "")
+
+    normalizedLine = string.gsub(normalizedLine, "|+", "|")
+
+    local firstSeparatorIndex = string.find(normalizedLine, "|", 1, true)
+    if not firstSeparatorIndex then
+        return nil, nil, nil
+    end
+
+    local recordType = string.sub(normalizedLine, 1, firstSeparatorIndex - 1)
+    local payload = string.sub(normalizedLine, firstSeparatorIndex + 1)
+
+    if recordType == "NAME" or recordType == "DEFAULT" then
+        return recordType, payload, nil
+    end
+
+    if recordType == "COMMAND" then
+        local secondSeparatorIndex = string.find(payload, "|", 1, true)
+        if not secondSeparatorIndex then
+            return recordType, nil, nil
+        end
+
+        local firstValue = string.sub(payload, 1, secondSeparatorIndex - 1)
+        local secondValue = string.sub(payload, secondSeparatorIndex + 1)
+        return recordType, firstValue, secondValue
+    end
+
+    return recordType, payload, nil
+end
+
 local function SerializePresetToString(presetName)
     EnsureSavedVariables()
+    FlushActivePresetToSavedVariables()
 
     if not presetName or presetName == "" then
         return ""
@@ -1886,20 +1936,20 @@ local function SerializePresetToString(presetName)
     end
 
     local resultLines = {}
-    resultLines[#resultLines + 1] = "return {"
-    resultLines[#resultLines + 1] = "  name = " .. EscapeLuaString(presetName) .. ","
-    resultLines[#resultLines + 1] = "  defaultResponse = " .. EscapeLuaString(presetData.defaultResponse or "") .. ","
-    resultLines[#resultLines + 1] = "  commands = {"
+    resultLines[#resultLines + 1] = "ARPRESET|1"
+    resultLines[#resultLines + 1] = "NAME|" .. EncodeTransferValue(presetName)
+    resultLines[#resultLines + 1] = "DEFAULT|" .. EncodeTransferValue(presetData.defaultResponse or "")
 
     local index = 1
     while presetData.commands and presetData.commands[index] do
         local commandData = presetData.commands[index]
-        resultLines[#resultLines + 1] = "    { command = " .. EscapeLuaString(commandData.command or "") .. ", response = " .. EscapeLuaString(commandData.response or "") .. " },"
+        resultLines[#resultLines + 1] =
+            "COMMAND|" ..
+            EncodeTransferValue(commandData.command or "") ..
+            "|" ..
+            EncodeTransferValue(commandData.response or "")
         index = index + 1
     end
-
-    resultLines[#resultLines + 1] = "  }"
-    resultLines[#resultLines + 1] = "}"
 
     return table.concat(resultLines, "\n")
 end
@@ -1956,27 +2006,137 @@ end
 local function ImportPresetFromText(rawText)
     EnsureSavedVariables()
 
-    local importText = TrimText(rawText or "")
+    local importText = tostring(rawText or "")
+
+    -- Safer normalize
+    importText = string.gsub(importText, "^\239\187\191", "")
+    importText = string.gsub(importText, "\r\n", "\n")
+    importText = string.gsub(importText, "\r", "\n")
+    importText = string.gsub(importText, "\194\160", " ")
+
+    local function CleanLineText(text)
+        local result = tostring(text or "")
+        result = string.gsub(result, "^\239\187\191", "")
+        result = string.gsub(result, "\194\160", " ")
+        result = string.gsub(result, "[\r\t]", "")
+        result = string.gsub(result, "^%s+", "")
+        result = string.gsub(result, "%s+$", "")
+        result = string.gsub(result, "[%z\1-\8\11\12\14-\31\127-\159]", "")
+        return result
+    end
+
+    local function ToByteString(text)
+        local result = {}
+        local index = 1
+
+        while index <= string.len(text) do
+            result[#result + 1] = tostring(string.byte(text, index))
+            index = index + 1
+        end
+
+        return table.concat(result, ",")
+    end
+
+    importText = TrimText(importText)
+
     if importText == "" then
-        return false, "Import text is corrupted."
+        return false, "Import text is empty."
     end
 
-    local loadedChunk = loadstring(importText)
-    if not loadedChunk then
-        return false, "Import text is corrupted."
+    local parsedData = {
+        name = "",
+        defaultResponse = "",
+        commands = {}
+    }
+
+    local normalizedLines = {}
+
+    for line in string.gmatch(importText, "([^\n]*)\n?") do
+        if line ~= nil and line ~= "" then
+            local cleanLine = CleanLineText(line)
+            cleanLine = string.gsub(cleanLine, "|+", "|")
+            if cleanLine ~= "" then
+                normalizedLines[#normalizedLines + 1] = cleanLine
+            end
+        end
     end
 
-    local success, importedData = pcall(loadedChunk)
-    if not success or type(importedData) ~= "table" then
-        return false, "Import text is corrupted."
+    if #normalizedLines == 0 then
+        return false, "Import text is empty."
     end
 
-    local importedPresetData = BuildImportedPresetData(importedData)
+    local firstLine = string.match(importText, "([^\n]+)") or ""
+    firstLine = CleanLineText(firstLine)
+    firstLine = string.gsub(firstLine, "|+", "|")
+
+    if firstLine ~= "ARPRESET|1" then
+        print(ToByteString(firstLine))
+        return false,
+            "Import text header is invalid. First line: [" ..
+            tostring(firstLine) ..
+            "]"
+    end
+
+    local lineIndex = 2
+    while lineIndex <= #normalizedLines do
+        local line = normalizedLines[lineIndex]
+        local recordType, firstValue, secondValue = ParseTransferRecord(line)
+        recordType = tostring(recordType or "")
+
+        if recordType == "NAME" then
+            if firstValue == nil then
+                return false, "Invalid NAME line."
+            end
+
+            local decodedName = DecodeTransferValue(firstValue)
+            if decodedName == nil then
+                return false, "Preset name could not be decoded."
+            end
+
+            parsedData.name = decodedName
+
+        elseif recordType == "DEFAULT" then
+            if firstValue == nil then
+                return false, "Invalid DEFAULT line."
+            end
+
+            local decodedDefaultResponse = DecodeTransferValue(firstValue)
+            if decodedDefaultResponse == nil then
+                return false, "Default response could not be decoded."
+            end
+
+            parsedData.defaultResponse = decodedDefaultResponse
+
+        elseif recordType == "COMMAND" then
+            if firstValue == nil or secondValue == nil then
+                return false, "Invalid COMMAND line."
+            end
+
+            local decodedCommand = DecodeTransferValue(firstValue)
+            local decodedResponse = DecodeTransferValue(secondValue)
+
+            if decodedCommand == nil or decodedResponse == nil then
+                return false, "A command line could not be decoded."
+            end
+
+            parsedData.commands[#parsedData.commands + 1] = {
+                command = decodedCommand,
+                response = decodedResponse
+            }
+
+        else
+            return false, "Unknown import line: " .. recordType
+        end
+
+        lineIndex = lineIndex + 1
+    end
+
+    local importedPresetData = BuildImportedPresetData(parsedData)
     if not importedPresetData then
-        return false, "Import text is corrupted."
+        return false, "Imported preset data is invalid."
     end
 
-    local importedName = LimitTextLength(TrimText(importedData.name or ""), CONST.PRESET_NAME_MAX_LENGTH)
+    local importedName = LimitTextLength(TrimText(parsedData.name or ""), CONST.PRESET_NAME_MAX_LENGTH)
     if importedName == "" then
         importedName = CONST.CREATE_NEW_PRESET_BASE_NAME
     end
@@ -2020,6 +2180,7 @@ local function ShowPresetTransferFrame(mode)
     if mode == "export" then
         local presetName = GetSelectedPresetName()
         local exportText = SerializePresetToString(presetName)
+        print("EXPORT_FIRST_LINE:", tostring(string.match(exportText, "([^\n]+)") or ""))
 
         UI.presetTransferTitleText:SetText(CONST.PRESET_TRANSFER_EXPORT_TITLE)
         UI.presetTransferEditBox:SetText(exportText)
@@ -2055,10 +2216,11 @@ local function ShowPresetTransferFrame(mode)
     UI.presetTransferFrame:Show()
     UI.presetTransferFrame:Raise()
 
-    UI.presetTransferEditBox:SetFocus()
-
     if mode == "export" then
+        UI.presetTransferEditBox:SetFocus()
         UI.presetTransferEditBox:HighlightText()
+    else
+        UI.presetTransferEditBox:SetFocus()
     end
 end
 
@@ -2582,7 +2744,7 @@ local function BuildCommandListArea(f)
 
     local dragInfoText = leftPaneBG:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     dragInfoText:SetPoint("TOPRIGHT", -12, -12)
-    dragInfoText:SetText("Right click to drag.")
+    dragInfoText:SetText("Right click to swap.")
 
     UI.commandScrollFrame = CreateFrame("ScrollFrame", addonName .. "AutoResponseCommandScrollFrame", leftPaneBG, "UIPanelScrollFrameTemplate")
     UI.commandScrollFrame:SetPoint("TOPLEFT", 10, -34)
