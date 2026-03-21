@@ -415,6 +415,12 @@ local function CopyPresetData(source)
     return result
 end
 
+local function GetCharacterKey()
+    local characterName = UnitName("player") or "Unknown"
+    local realmName = GetRealmName() or "UnknownRealm"
+    return tostring(realmName) .. " - " .. tostring(characterName)
+end
+
 local function EnsureSavedVariables()
     if type(RTAutoResponseSave) ~= "table" then
         RTAutoResponseSave = {}
@@ -424,8 +430,24 @@ local function EnsureSavedVariables()
         RTAutoResponseSave.presets = {}
     end
 
-    if type(RTAutoResponseSave.activePresetName) ~= "string" then
-        RTAutoResponseSave.activePresetName = CONST.DEFAULT_PRESET_NAME
+    if type(RTAutoResponseSave.characterSettings) ~= "table" then
+        RTAutoResponseSave.characterSettings = {}
+    end
+
+    local characterKey = GetCharacterKey()
+
+    if type(RTAutoResponseSave.characterSettings[characterKey]) ~= "table" then
+        RTAutoResponseSave.characterSettings[characterKey] = {}
+    end
+
+    if type(RTAutoResponseSave.characterSettings[characterKey].activePresetName) ~= "string" then
+        if type(RTAutoResponseSave.activePresetName) == "string"
+            and RTAutoResponseSave.activePresetName ~= ""
+            and RTAutoResponseSave.presets[RTAutoResponseSave.activePresetName] then
+            RTAutoResponseSave.characterSettings[characterKey].activePresetName = RTAutoResponseSave.activePresetName
+        else
+            RTAutoResponseSave.characterSettings[characterKey].activePresetName = CONST.DEFAULT_PRESET_NAME
+        end
     end
 
     if RTAutoResponseSave.enabled == nil then
@@ -463,12 +485,43 @@ local function EnsureSavedVariables()
         RTAutoResponseSave.presets[CONST.DEFAULT_PRESET_NAME].order = -1
     end
 
-    if not RTAutoResponseSave.activePresetName
+    local activePresetName = RTAutoResponseSave.characterSettings[characterKey].activePresetName
+
+    if not activePresetName
+        or activePresetName == ""
+        or not RTAutoResponseSave.presets[activePresetName] then
+        RTAutoResponseSave.characterSettings[characterKey].activePresetName = CONST.DEFAULT_PRESET_NAME
+    end
+
+    if type(RTAutoResponseSave.activePresetName) ~= "string"
         or RTAutoResponseSave.activePresetName == ""
         or not RTAutoResponseSave.presets[RTAutoResponseSave.activePresetName] then
-        RTAutoResponseSave.activePresetName = CONST.DEFAULT_PRESET_NAME
+        RTAutoResponseSave.activePresetName = RTAutoResponseSave.characterSettings[characterKey].activePresetName
     end
 end
+
+local function GetCharacterActivePresetName()
+    EnsureSavedVariables()
+
+    local characterKey = GetCharacterKey()
+
+    if type(RTAutoResponseSave.characterSettings) ~= "table" then
+        RTAutoResponseSave.characterSettings = {}
+    end
+
+    if type(RTAutoResponseSave.characterSettings[characterKey]) ~= "table" then
+        RTAutoResponseSave.characterSettings[characterKey] = {}
+    end
+
+    local presetName = RTAutoResponseSave.characterSettings[characterKey].activePresetName
+
+    if type(presetName) ~= "string" or presetName == "" or not RTAutoResponseSave.presets[presetName] then
+        return CONST.DEFAULT_PRESET_NAME
+    end
+
+    return presetName
+end
+
 
 local function FlushActivePresetToSavedVariables()
     EnsureSavedVariables()
@@ -476,7 +529,8 @@ local function FlushActivePresetToSavedVariables()
     local presetName = STATE.selectedPresetName
 
     if not presetName or presetName == "" then
-        presetName = RTAutoResponseSave.activePresetName
+        local characterKey = GetCharacterKey()
+        presetName = RTAutoResponseSave.characterSettings[characterKey].activePresetName
     end
 
     if not presetName or presetName == "" then
@@ -531,6 +585,16 @@ local function FlushActivePresetToSavedVariables()
     end
 
     presetData.commands = newCommands
+
+    local characterKey = GetCharacterKey()
+    if type(RTAutoResponseSave.characterSettings) ~= "table" then
+        RTAutoResponseSave.characterSettings = {}
+    end
+    if type(RTAutoResponseSave.characterSettings[characterKey]) ~= "table" then
+        RTAutoResponseSave.characterSettings[characterKey] = {}
+    end
+
+    RTAutoResponseSave.characterSettings[characterKey].activePresetName = presetName
     RTAutoResponseSave.activePresetName = presetName
     RTAutoResponseSave.enabled = STATE.isAutoResponseEnabled and true or false
 end
@@ -542,16 +606,24 @@ end
 local function GetSelectedPresetName()
     EnsureSavedVariables()
 
-    local presetName = RTAutoResponseSave.activePresetName
-    if type(presetName) ~= "string" or presetName == "" then
-        return CONST.DEFAULT_PRESET_NAME
+    local presetName = STATE.selectedPresetName
+
+    if type(presetName) == "string"
+        and presetName ~= ""
+        and presetName ~= CONST.CREATE_NEW_PRESET_LABEL
+        and RTAutoResponseSave.presets[presetName] then
+        return presetName
     end
 
-    if not RTAutoResponseSave.presets[presetName] then
-        return CONST.DEFAULT_PRESET_NAME
+    presetName = GetCharacterActivePresetName()
+
+    if type(presetName) == "string"
+        and presetName ~= ""
+        and RTAutoResponseSave.presets[presetName] then
+        return presetName
     end
 
-    return presetName
+    return CONST.DEFAULT_PRESET_NAME
 end
 
 local function SetSelectedPresetName(presetName)
@@ -563,6 +635,14 @@ local function SetSelectedPresetName(presetName)
         and RTAutoResponseSave
         and RTAutoResponseSave.presets
         and RTAutoResponseSave.presets[presetName] then
+        local characterKey = GetCharacterKey()
+        if type(RTAutoResponseSave.characterSettings) ~= "table" then
+            RTAutoResponseSave.characterSettings = {}
+        end
+        if type(RTAutoResponseSave.characterSettings[characterKey]) ~= "table" then
+            RTAutoResponseSave.characterSettings[characterKey] = {}
+        end
+        RTAutoResponseSave.characterSettings[characterKey].activePresetName = presetName
         RTAutoResponseSave.activePresetName = presetName
     end
 
@@ -714,7 +794,7 @@ end
 local function GetActivePresetData()
     EnsureSavedVariables()
 
-    local presetName = RTAutoResponseSave.activePresetName
+    local presetName = GetCharacterActivePresetName()
     if not presetName or presetName == "" then
         return nil
     end
@@ -1832,6 +1912,14 @@ local function CreateNewPreset()
     newPresetData.order = RTAutoResponseSave.presetOrderCounter
 
     RTAutoResponseSave.presets[presetName] = newPresetData
+    local characterKey = GetCharacterKey()
+    if type(RTAutoResponseSave.characterSettings) ~= "table" then
+        RTAutoResponseSave.characterSettings = {}
+    end
+    if type(RTAutoResponseSave.characterSettings[characterKey]) ~= "table" then
+        RTAutoResponseSave.characterSettings[characterKey] = {}
+    end
+    RTAutoResponseSave.characterSettings[characterKey].activePresetName = presetName
     RTAutoResponseSave.activePresetName = presetName
 
     LoadPresetIntoUI(presetName, true)
@@ -2159,6 +2247,14 @@ local function ImportPresetFromText(rawText)
     finalPresetData.order = RTAutoResponseSave.presetOrderCounter
 
     RTAutoResponseSave.presets[finalPresetName] = finalPresetData
+    local characterKey = GetCharacterKey()
+    if type(RTAutoResponseSave.characterSettings) ~= "table" then
+        RTAutoResponseSave.characterSettings = {}
+    end
+    if type(RTAutoResponseSave.characterSettings[characterKey]) ~= "table" then
+        RTAutoResponseSave.characterSettings[characterKey] = {}
+    end
+    RTAutoResponseSave.characterSettings[characterKey].activePresetName = finalPresetName
     RTAutoResponseSave.activePresetName = finalPresetName
 
     LoadPresetIntoUI(finalPresetName, true)
@@ -2263,7 +2359,7 @@ end
 local function GetMatchedResponseForWhisper(messageText)
     EnsureSavedVariables()
 
-    local presetName = RTAutoResponseSave.activePresetName
+    local presetName = GetCharacterActivePresetName()
     if not presetName or presetName == "" then
         return nil, false
     end
@@ -2315,7 +2411,7 @@ local function GetCommandListMessages()
     EnsureSavedVariables()
 
     local resultMessages = {}
-    local presetName = RTAutoResponseSave.activePresetName
+    local presetName = GetCharacterActivePresetName()
     local presetData = nil
 
     if presetName and presetName ~= "" then
@@ -2496,6 +2592,13 @@ loader:RegisterEvent("PLAYER_LOGOUT")
 loader:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" and arg1 == addonName then
         EnsureSavedVariables()
+
+        if not RTAutoResponseSave.presets[CONST.DEFAULT_PRESET_NAME] then
+            local defaultPresetData = CopyPresetData(DEFAULT_PRESET_TEMPLATE)
+            defaultPresetData.order = -1
+            RTAutoResponseSave.presets[CONST.DEFAULT_PRESET_NAME] = defaultPresetData
+        end
+
         STATE.isAutoResponseEnabled = RTAutoResponseSave.enabled and true or false
         RefreshAutoResponseOverlayIfAvailable()
         return
@@ -3107,7 +3210,7 @@ function CreateAutoResponseTabContent(parent, onClose)
     f:SetScript("OnShow", function()
         EnsureSavedVariables()
 
-        local activePresetName = RTAutoResponseSave.activePresetName
+        local activePresetName = GetCharacterActivePresetName()
         if not activePresetName or activePresetName == "" or not RTAutoResponseSave.presets[activePresetName] then
             activePresetName = CONST.DEFAULT_PRESET_NAME
         end
