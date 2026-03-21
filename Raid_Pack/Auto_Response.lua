@@ -452,14 +452,15 @@ local function FlushActivePresetToSavedVariables()
 
     local presetData = RTAutoResponseSave.presets[presetName]
 
-    if UI.defaultResponseEditBox then
-        presetData.defaultResponse = LimitTextLength(UI.defaultResponseEditBox:GetText() or "", CONST.RESPONSE_MAX_LENGTH)
-    else
-        presetData.defaultResponse = LimitTextLength(tostring(presetData.defaultResponse or ""), CONST.RESPONSE_MAX_LENGTH)
+    if not UI.defaultResponseEditBox or not DATA.commandRows then
+        RTAutoResponseSave.activePresetName = presetName
+        RTAutoResponseSave.enabled = STATE.isAutoResponseEnabled and true or false
+        return
     end
 
-    presetData.commands = {}
+    presetData.defaultResponse = LimitTextLength(UI.defaultResponseEditBox:GetText() or "", CONST.RESPONSE_MAX_LENGTH)
 
+    local newCommands = {}
     local saveIndex = 1
     local rowIndex = 1
 
@@ -471,7 +472,7 @@ local function FlushActivePresetToSavedVariables()
             local limitedResponse = LimitTextLength(row.response or "", CONST.RESPONSE_MAX_LENGTH)
 
             if sanitizedCommand ~= "" and limitedResponse ~= "" and not IsReservedHelpAlias(sanitizedCommand) then
-                presetData.commands[saveIndex] = {
+                newCommands[saveIndex] = {
                     command = sanitizedCommand,
                     response = limitedResponse
                 }
@@ -482,6 +483,7 @@ local function FlushActivePresetToSavedVariables()
         rowIndex = rowIndex + 1
     end
 
+    presetData.commands = newCommands
     RTAutoResponseSave.activePresetName = presetName
     RTAutoResponseSave.enabled = STATE.isAutoResponseEnabled and true or false
 end
