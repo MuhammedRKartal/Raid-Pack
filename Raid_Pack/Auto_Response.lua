@@ -15,7 +15,9 @@ local STATE = {
     presetTransferMode = nil,
     defaultResponseThrottleBySender = {},
     draggedCommandRow = nil,
-    isDraggingCommandRow = false
+    isDraggingCommandRow = false,
+    dragHoverTargetRow = nil,
+    lastSelectedPresetName = nil
 }
 
 local UI = {
@@ -48,6 +50,7 @@ local UI = {
     commandScrollFrame = nil,
     commandContentFrame = nil,
     commandListButtons = {},
+    commandDragInfoText = nil,
 
     commandDetailPanel = nil,
     commandDetailEmptyText = nil,
@@ -273,12 +276,8 @@ local function SetEditBoxInteractionEnabled(editBox, isEnabled)
         editBox:EnableKeyboard(isEnabled and true or false)
     end
 
-    if editBox.SetTextColor then
-        if isEnabled then
-            editBox:SetTextColor(1, 1, 1)
-        else
-            editBox:SetTextColor(0.65, 0.65, 0.65)
-        end
+    if editBox.SetTextColor and not isEnabled then
+        editBox:SetTextColor(0.65, 0.65, 0.65)
     end
 
     if editBox.SetAlpha then
@@ -477,13 +476,9 @@ local function EnsureSavedVariables()
         RTAutoResponseSave.presets[presetName] = copiedPresetData
     end
 
-    if not RTAutoResponseSave.presets[CONST.DEFAULT_PRESET_NAME] then
-        local defaultPresetData = CopyPresetData(DEFAULT_PRESET_TEMPLATE)
-        defaultPresetData.order = -1
-        RTAutoResponseSave.presets[CONST.DEFAULT_PRESET_NAME] = defaultPresetData
-    else
-        RTAutoResponseSave.presets[CONST.DEFAULT_PRESET_NAME].order = -1
-    end
+    local embeddedDefaultPresetData = CopyPresetData(DEFAULT_PRESET_TEMPLATE)
+    embeddedDefaultPresetData.order = -1
+    RTAutoResponseSave.presets[CONST.DEFAULT_PRESET_NAME] = embeddedDefaultPresetData
 
     local activePresetName = RTAutoResponseSave.characterSettings[characterKey].activePresetName
 
@@ -627,6 +622,18 @@ local function GetSelectedPresetName()
 end
 
 local function SetSelectedPresetName(presetName)
+    local currentPresetName = STATE.selectedPresetName
+
+    if currentPresetName
+        and currentPresetName ~= ""
+        and currentPresetName ~= CONST.CREATE_NEW_PRESET_LABEL
+        and currentPresetName ~= presetName
+        and RTAutoResponseSave
+        and RTAutoResponseSave.presets
+        and RTAutoResponseSave.presets[currentPresetName] then
+        STATE.lastSelectedPresetName = currentPresetName
+    end
+
     STATE.selectedPresetName = presetName
 
     if presetName
@@ -806,6 +813,49 @@ local function GetActivePresetData()
     return RTAutoResponseSave.presets[presetName]
 end
 
+local function IsDefaultResponseDirty()
+    if not UI.defaultResponseEditBox then
+        return false
+    end
+
+    local presetData = GetActivePresetData()
+    if not presetData then
+        return false
+    end
+
+    local currentValue = LimitTextLength(UI.defaultResponseEditBox:GetText() or "", CONST.RESPONSE_MAX_LENGTH)
+    local savedValue = LimitTextLength(presetData.defaultResponse or "", CONST.RESPONSE_MAX_LENGTH)
+
+    return currentValue ~= savedValue
+end
+
+local function GetDeletePresetFallbackName(deletedPresetName)
+    EnsureSavedVariables()
+
+    local fallbackPresetName = STATE.lastSelectedPresetName
+
+    if fallbackPresetName
+        and fallbackPresetName ~= ""
+        and fallbackPresetName ~= deletedPresetName
+        and fallbackPresetName ~= CONST.CREATE_NEW_PRESET_LABEL
+        and RTAutoResponseSave.presets[fallbackPresetName] then
+        return fallbackPresetName
+    end
+
+    local sortedPresetNames = GetSortedPresetNames()
+    local index = 1
+
+    while index <= #sortedPresetNames do
+        local presetName = sortedPresetNames[index]
+        if presetName ~= CONST.CREATE_NEW_PRESET_LABEL and presetName ~= deletedPresetName and RTAutoResponseSave.presets[presetName] then
+            return presetName
+        end
+        index = index + 1
+    end
+
+    return CONST.DEFAULT_PRESET_NAME
+end
+
 ------------------------------------------------------------
 -- COMMAND DATA HELPERS
 ------------------------------------------------------------
@@ -889,6 +939,67 @@ local function DoesCommandExist(commandText, ignoredRow)
     end
 
     return false
+end
+
+local function GetSelectedCommandDraftValues()
+    local commandText = ""
+    local responseText = ""
+
+    if UI.commandDetailCommandEditBox then
+        commandText = SanitizeCommandText(UI.commandDetailCommandEditBox:GetText() or "")
+    end
+
+    if UI.commandDetailResponseEditBox then
+        responseText = LimitTextLength(UI.commandDetailResponseEditBox:GetText() or "", CONST.RESPONSE_MAX_LENGTH)
+    end
+
+    return commandText, responseText
+end
+
+local function IsSelectedCommandDirty()
+    if not STATE.selectedCommandRow or STATE.selectedCommandRow.isDeleted or STATE.selectedCommandRow.isSystemCommand then
+        return false
+    end
+
+    local commandText, responseText = GetSelectedCommandDraftValues()
+
+    return commandText ~= tostring(STATE.selectedCommandRow.command or "")
+        or responseText ~= tostring(STATE.selectedCommandRow.response or "")
+end
+
+local function CanSaveSelectedCommand()
+    if not IsCurrentPresetEditable() then
+        return false
+    end
+
+    if not STATE.selectedCommandRow or STATE.selectedCommandRow.isDeleted or STATE.selectedCommandRow.isSystemCommand then
+        return false
+    end
+
+    local commandText, responseText = GetSelectedCommandDraftValues()
+
+    if commandText == tostring(STATE.selectedCommandRow.command or "")
+        and responseText == tostring(STATE.selectedCommandRow.response or "") then
+        return false
+    end
+
+    if TrimText(commandText) == "" then
+        return false
+    end
+
+    if TrimText(responseText) == "" then
+        return false
+    end
+
+    if IsReservedHelpAlias(commandText) then
+        return false
+    end
+
+    if DoesCommandExist(commandText, STATE.selectedCommandRow) then
+        return false
+    end
+
+    return true
 end
 
 local function RefreshCommandDuplicateState(row)
@@ -1014,10 +1125,10 @@ local function RefreshDefaultResponseSaveButton()
         return
     end
 
-    if not IsCurrentPresetEditable() then
-        UI.defaultResponseSaveBtn:SetText("Save")
-        STATE.defaultResponseSaveResetAt = 0
-        return
+    local canSave = false
+
+    if IsCurrentPresetEditable() and IsDefaultResponseDirty() then
+        canSave = true
     end
 
     if STATE.defaultResponseSaveResetAt > 0 and GetTime() < STATE.defaultResponseSaveResetAt then
@@ -1025,6 +1136,12 @@ local function RefreshDefaultResponseSaveButton()
     else
         UI.defaultResponseSaveBtn:SetText("Save")
         STATE.defaultResponseSaveResetAt = 0
+    end
+
+    if canSave then
+        UI.defaultResponseSaveBtn:Enable()
+    else
+        UI.defaultResponseSaveBtn:Disable()
     end
 end
 
@@ -1060,13 +1177,15 @@ local function RefreshDefaultResponseControlStates()
         SetEditBoxInteractionEnabled(UI.defaultResponseEditBox, isEditable)
     end
 
-    if UI.defaultResponseSaveBtn then
+    if UI.commandDragInfoText then
         if isEditable then
-            UI.defaultResponseSaveBtn:Enable()
+            UI.commandDragInfoText:Show()
         else
-            UI.defaultResponseSaveBtn:Disable()
+            UI.commandDragInfoText:Hide()
         end
     end
+
+    RefreshDefaultResponseSaveButton()
 end
 
 local function RefreshAddCommandButtonState()
@@ -1197,6 +1316,8 @@ end
 -- COMMAND DETAIL UI
 ------------------------------------------------------------
 
+local RefreshCommandDragVisuals
+
 local function RefreshCommandListButtonText(button)
     if not button or not button.row then
         return
@@ -1251,6 +1372,15 @@ local function RefreshSelectedCommandListPreview()
 
     if IsReservedHelpAlias(draftCommandText or "") or DoesCommandExist(draftCommandText or "", STATE.selectedCommandRow) then
         displayText = displayText .. " |cffff3b30(Dup)|r"
+    end
+
+    if STATE.isDraggingCommandRow and selectedButton.row == STATE.draggedCommandRow then
+        displayText = "<< " .. displayText .. " >>"
+    elseif STATE.isDraggingCommandRow
+        and STATE.dragHoverTargetRow
+        and selectedButton.row == STATE.dragHoverTargetRow
+        and selectedButton.row ~= STATE.draggedCommandRow then
+        displayText = "[[ " .. displayText .. " ]]"
     end
 
     selectedButton:SetText(displayText)
@@ -1348,6 +1478,47 @@ local function RefreshCommandDetailInputColors()
     end
 end
 
+local function RefreshCommandDetailControlStates()
+    if not UI.commandDetailCommandEditBox or not UI.commandDetailResponseEditBox or not UI.commandDetailSaveBtn or not UI.commandDetailDeleteBtn then
+        return
+    end
+
+    if not STATE.selectedCommandRow or STATE.selectedCommandRow.isDeleted then
+        SetEditBoxInteractionEnabled(UI.commandDetailCommandEditBox, false)
+        SetEditBoxInteractionEnabled(UI.commandDetailResponseEditBox, false)
+        UI.commandDetailSaveBtn:Disable()
+        UI.commandDetailDeleteBtn:Disable()
+        return
+    end
+
+    if not IsCurrentPresetEditable() then
+        SetEditBoxInteractionEnabled(UI.commandDetailCommandEditBox, false)
+        SetEditBoxInteractionEnabled(UI.commandDetailResponseEditBox, false)
+        UI.commandDetailSaveBtn:Disable()
+        UI.commandDetailDeleteBtn:Disable()
+        return
+    end
+
+    if STATE.selectedCommandRow.isSystemCommand then
+        SetEditBoxInteractionEnabled(UI.commandDetailCommandEditBox, false)
+        SetEditBoxInteractionEnabled(UI.commandDetailResponseEditBox, false)
+        UI.commandDetailSaveBtn:Disable()
+        UI.commandDetailDeleteBtn:Disable()
+        return
+    end
+
+    SetEditBoxInteractionEnabled(UI.commandDetailCommandEditBox, true)
+    SetEditBoxInteractionEnabled(UI.commandDetailResponseEditBox, true)
+
+    if CanSaveSelectedCommand() then
+        UI.commandDetailSaveBtn:Enable()
+    else
+        UI.commandDetailSaveBtn:Disable()
+    end
+
+    UI.commandDetailDeleteBtn:Enable()
+end
+
 local function UpdateCommandDetailDirtyState()
     if not UI.commandDetailStatusText then
         return
@@ -1408,40 +1579,9 @@ local function UpdateCommandDetailDirtyState()
         UI.commandDetailStatusText:SetText("")
         UI.commandDetailStatusText:Hide()
     end
-end
 
-local function RefreshCommandDetailControlStates()
-    if not UI.commandDetailCommandEditBox or not UI.commandDetailResponseEditBox or not UI.commandDetailSaveBtn or not UI.commandDetailDeleteBtn then
-        return
-    end
-
-    if not STATE.selectedCommandRow or STATE.selectedCommandRow.isDeleted then
-        SetEditBoxInteractionEnabled(UI.commandDetailCommandEditBox, false)
-        SetEditBoxInteractionEnabled(UI.commandDetailResponseEditBox, false)
-        UI.commandDetailSaveBtn:Disable()
-        UI.commandDetailDeleteBtn:Disable()
-        return
-    end
-
-    if not IsCurrentPresetEditable() then
-        SetEditBoxInteractionEnabled(UI.commandDetailCommandEditBox, false)
-        SetEditBoxInteractionEnabled(UI.commandDetailResponseEditBox, false)
-        UI.commandDetailSaveBtn:Disable()
-        UI.commandDetailDeleteBtn:Disable()
-        return
-    end
-
-    if STATE.selectedCommandRow.isSystemCommand then
-        SetEditBoxInteractionEnabled(UI.commandDetailCommandEditBox, false)
-        SetEditBoxInteractionEnabled(UI.commandDetailResponseEditBox, false)
-        UI.commandDetailSaveBtn:Disable()
-        UI.commandDetailDeleteBtn:Disable()
-    else
-        SetEditBoxInteractionEnabled(UI.commandDetailCommandEditBox, true)
-        SetEditBoxInteractionEnabled(UI.commandDetailResponseEditBox, true)
-        UI.commandDetailSaveBtn:Enable()
-        UI.commandDetailDeleteBtn:Enable()
-    end
+    RefreshCommandDetailControlStates()
+    RefreshCommandDragVisuals()
 end
 
 local function LoadSelectedCommandToDetailPanel()
@@ -1522,7 +1662,7 @@ local function ClearCommandListButtons()
     end
 end
 
-local function RefreshCommandDragVisuals()
+RefreshCommandDragVisuals = function()
     local index = 1
 
     while index <= #UI.commandListButtons do
@@ -1558,14 +1698,17 @@ local function StartCommandRowDrag(row)
     end
 
     STATE.draggedCommandRow = row
+    STATE.dragHoverTargetRow = nil
     STATE.isDraggingCommandRow = true
 
     SelectCommandRow(row)
+    RefreshCommandButtonSelection()
     RefreshCommandDragVisuals()
 end
 
 local function StopCommandRowDrag()
     STATE.draggedCommandRow = nil
+    STATE.dragHoverTargetRow = nil
     STATE.isDraggingCommandRow = false
     RefreshCommandDragVisuals()
 end
@@ -1602,7 +1745,7 @@ local function RefreshCommandListUI()
 
         RefreshCommandListButtonText(button)
 
-        button:SetScript("OnClick", function(self, mouseButton)
+                button:SetScript("OnClick", function(self, mouseButton)
             local row = self.row
 
             if not row then
@@ -1623,14 +1766,35 @@ local function RefreshCommandListUI()
                 return
             end
 
-            -- Drag/swap mode aktifse, başka bir row'a sağ veya sol tık swap yapsın
+            if mouseButton == "RightButton" then
+                if STATE.isDraggingCommandRow and STATE.draggedCommandRow then
+                    if STATE.draggedCommandRow == row then
+                        SelectCommandRow(row)
+                        RefreshCommandButtonSelection()
+                        RefreshCommandDragVisuals()
+                        return
+                    end
+
+                    if SwapCommandRows(STATE.draggedCommandRow, row) then
+                        FlushActivePresetToSavedVariables()
+                        StopCommandRowDrag()
+                        RefreshCommandListUI()
+                        SelectCommandRow(row)
+                    else
+                        StopCommandRowDrag()
+                    end
+                    return
+                end
+
+                StartCommandRowDrag(row)
+                return
+            end
+
             if STATE.isDraggingCommandRow and STATE.draggedCommandRow then
                 if STATE.draggedCommandRow == row then
-                    if mouseButton == "RightButton" then
-                        StopCommandRowDrag()
-                    else
-                        SelectCommandRow(row)
-                    end
+                    SelectCommandRow(row)
+                    RefreshCommandButtonSelection()
+                    RefreshCommandDragVisuals()
                     return
                 end
 
@@ -1645,15 +1809,40 @@ local function RefreshCommandListUI()
                 return
             end
 
-            -- Normal davranış
             if mouseButton == "LeftButton" then
                 SelectCommandRow(row)
                 return
             end
+        end)
 
-            if mouseButton == "RightButton" then
-                StartCommandRowDrag(row)
+        button:SetScript("OnEnter", function(self)
+            if not STATE.isDraggingCommandRow then
                 return
+            end
+
+            if not self.row or self.row.isDeleted or self.row.isSystemCommand then
+                STATE.dragHoverTargetRow = nil
+                RefreshCommandDragVisuals()
+                return
+            end
+
+            if self.row == STATE.draggedCommandRow then
+                STATE.dragHoverTargetRow = nil
+            else
+                STATE.dragHoverTargetRow = self.row
+            end
+
+            RefreshCommandDragVisuals()
+        end)
+
+        button:SetScript("OnLeave", function(self)
+            if not STATE.isDraggingCommandRow then
+                return
+            end
+
+            if STATE.dragHoverTargetRow == self.row then
+                STATE.dragHoverTargetRow = nil
+                RefreshCommandDragVisuals()
             end
         end)
 
@@ -1711,10 +1900,9 @@ local function SaveSelectedCommandDetail()
     end
 
     local commandText = SanitizeCommandText(UI.commandDetailCommandEditBox:GetText() or "")
-    local responseText = TrimText(UI.commandDetailResponseEditBox:GetText() or "")
-    responseText = LimitTextLength(responseText, CONST.RESPONSE_MAX_LENGTH)
+    local responseText = LimitTextLength(UI.commandDetailResponseEditBox:GetText() or "", CONST.RESPONSE_MAX_LENGTH)
 
-    if commandText == "" then
+    if TrimText(commandText) == "" then
         if UI.commandDetailStatusText then
             UI.commandDetailStatusText:SetText("|cffff3b30Command Required|r")
             UI.commandDetailStatusText:Show()
@@ -1722,7 +1910,7 @@ local function SaveSelectedCommandDetail()
         return
     end
 
-    if responseText == "" then
+    if TrimText(responseText) == "" then
         if UI.commandDetailStatusText then
             UI.commandDetailStatusText:SetText("|cffff3b30Response Required|r")
             UI.commandDetailStatusText:Show()
@@ -1754,6 +1942,9 @@ local function SaveSelectedCommandDetail()
     RefreshCommandListUI()
     RefreshAddCommandButtonState()
     LoadSelectedCommandToDetailPanel()
+    RefreshCommandDetailInputColors()
+    RefreshCommandDetailControlStates()
+    RefreshSelectedCommandListPreview()
 
     if UI.commandDetailStatusText then
         UI.commandDetailStatusText:SetText("")
@@ -1842,6 +2033,7 @@ local function SaveDefaultResponse()
     STATE.defaultResponseSaveResetAt = GetTime() + 3
     RefreshDefaultResponseSaveButton()
     RefreshDefaultResponseInputColor()
+    RefreshDefaultResponseControlStates()
 end
 
 ------------------------------------------------------------
@@ -1946,8 +2138,9 @@ local function DeletePresetConfirmed(presetName)
 
     RTAutoResponseSave.presets[presetName] = nil
 
-    SetSelectedPresetName(CONST.DEFAULT_PRESET_NAME)
-    LoadPresetIntoUI(CONST.DEFAULT_PRESET_NAME, true)
+    local fallbackPresetName = GetDeletePresetFallbackName(presetName)
+    SetSelectedPresetName(fallbackPresetName)
+    LoadPresetIntoUI(fallbackPresetName, true)
 end
 
 local function GetSelectedPresetDisplayName()
@@ -2845,9 +3038,9 @@ local function BuildCommandListArea(f)
     leftPaneLabel:SetPoint("TOPLEFT", 12, -12)
     leftPaneLabel:SetText("Command List")
 
-    local dragInfoText = leftPaneBG:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    dragInfoText:SetPoint("TOPRIGHT", -12, -12)
-    dragInfoText:SetText("Right click to swap.")
+    UI.commandDragInfoText = leftPaneBG:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    UI.commandDragInfoText:SetPoint("TOPRIGHT", -12, -12)
+    UI.commandDragInfoText:SetText("Right click to swap.")
 
     UI.commandScrollFrame = CreateFrame("ScrollFrame", addonName .. "AutoResponseCommandScrollFrame", leftPaneBG, "UIPanelScrollFrameTemplate")
     UI.commandScrollFrame:SetPoint("TOPLEFT", 10, -34)
@@ -2919,6 +3112,8 @@ local function BuildCommandDetailArea(f, leftPaneBG)
         if not IsCurrentPresetEditable() then
             RefreshCommandDetailInputColors()
             UpdateCommandDetailDirtyState()
+            RefreshCommandDetailControlStates()
+            RefreshSelectedCommandListPreview()
             return
         end
 
@@ -2934,12 +3129,16 @@ local function BuildCommandDetailArea(f, leftPaneBG)
             end
 
             self:SetCursorPosition(cursorPosition)
-            RefreshSelectedCommandListPreview()
+            RefreshCommandDetailInputColors()
             UpdateCommandDetailDirtyState()
+            RefreshCommandDetailControlStates()
+            RefreshSelectedCommandListPreview()
             return
         end
 
+        RefreshCommandDetailInputColors()
         UpdateCommandDetailDirtyState()
+        RefreshCommandDetailControlStates()
         RefreshSelectedCommandListPreview()
     end)
 
@@ -2976,6 +3175,8 @@ local function BuildCommandDetailArea(f, leftPaneBG)
         if not IsCurrentPresetEditable() then
             RefreshCommandDetailInputColors()
             UpdateCommandDetailDirtyState()
+            RefreshCommandDetailControlStates()
+            RefreshSelectedCommandListPreview()
             return
         end
 
@@ -2983,12 +3184,16 @@ local function BuildCommandDetailArea(f, leftPaneBG)
         if string.len(currentText) > CONST.RESPONSE_MAX_LENGTH then
             self:SetText(string.sub(currentText, 1, CONST.RESPONSE_MAX_LENGTH))
             self:SetCursorPosition(CONST.RESPONSE_MAX_LENGTH)
-            RefreshSelectedCommandListPreview()
+            RefreshCommandDetailInputColors()
             UpdateCommandDetailDirtyState()
+            RefreshCommandDetailControlStates()
+            RefreshSelectedCommandListPreview()
             return
         end
 
+        RefreshCommandDetailInputColors()
         UpdateCommandDetailDirtyState()
+        RefreshCommandDetailControlStates()
         RefreshSelectedCommandListPreview()
     end)
 
