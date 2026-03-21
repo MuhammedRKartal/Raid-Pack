@@ -11,6 +11,7 @@ local STATE = {
     isSpamming = false,
     selectedPresetName = nil,
     saveFeedbackResetAt = 0,
+    uiUpdateAccumulator = 0,
 }
 
 local UI = {
@@ -30,30 +31,27 @@ local UI = {
     channelRows = {},
 }
 
-local DATA = {
-    defaultCurrentSettings = {
-        intervals = {
-            ["General"] = "23",
-            ["Trade"] = "17",
-            ["World"] = "61",
-            ["YELL"] = "37"
-        },
-        enabledChannels = {
-            ["General"] = true,
-            ["Trade"] = true,
-            ["World"] = true,
-            ["YELL"] = false
-        }
+local CONST = {
+    CREATE_NEW_PRESET_LABEL = "Create New",
+    CREATE_NEW_PRESET_BASE_NAME = "New Message",
+    DEFAULT_PRESET_NAME = "Weakauras Discord",
+    DEFAULT_PRESET_MESSAGE = "Need a new UI or nice Weakauras to track everything? Come Join the Weakaura Center: https://discord.gg/7E6jAPsJD9",
+    PRESET_NAME_MAX_LENGTH = 21,
+    MAX_MESSAGE_LENGTH = 255,
+    UI_UPDATE_INTERVAL = 0.1,
+    DEFAULT_INTERVALS = {
+        ["General"] = "23",
+        ["Trade"] = "17",
+        ["World"] = "61",
+        ["YELL"] = "37",
     },
-
-    defaultEmbeddedPreset = {
-        message = "Need a new UI or nice Weakauras to track everything? Come Join the Weakaura Center: https://discord.gg/7E6jAPsJD9",
-        isDefault = true,
-        isReadOnly = true,
-        order = 0,
+    DEFAULT_ENABLED_CHANNELS = {
+        ["General"] = true,
+        ["Trade"] = true,
+        ["World"] = true,
+        ["YELL"] = false,
     },
-
-    channelPool = {
+    CHANNEL_POOL = {
         { name = "General", chatType = "CHANNEL" },
         { name = "Trade", chatType = "CHANNEL" },
         { name = "World", chatType = "CHANNEL" },
@@ -61,21 +59,12 @@ local DATA = {
     },
 }
 
-local CONST = {
-    CREATE_NEW_PRESET_LABEL = "Create New",
-    CREATE_NEW_PRESET_BASE_NAME = "New Message",
-    DEFAULT_PRESET_NAME = "Weakauras Discord",
-    DEFAULT_PRESET_MESSAGE = "Need a new UI or nice Weakauras to track everything? Come Join the Weakaura Center: https://discord.gg/7E6jAPsJD9",
-    DEFAULT_PRESET_READONLY_TEXT = "Need a new UI or nice Weakauras to track everything? Come Join the Weakaura Center: https://discord.gg/7E6jAPsJD9\n(Default preset is read-only)",
-    PRESET_NAME_MAX_LENGTH = 21,
-}
-
+CONST.DEFAULT_PRESET_READONLY_TEXT = CONST.DEFAULT_PRESET_MESSAGE .. "\n(Default preset is read-only)"
 CONST.SPAMMER_PRESET_DELETE_POPUP = addonName .. "SpammerPresetDeletePopup"
 
 local eventFrame = CreateFrame("Frame")
+local loader = CreateFrame("Frame")
 
-local CopyCurrentSettings
-local CopyPresetSettings
 local GetSelectedPresetName
 
 ------------------------------------------------------------
@@ -87,16 +76,52 @@ function RT_IsSpammerEnabled()
 end
 
 ------------------------------------------------------------
--- DATA COPY / SAVE HELPERS
+-- TEXT / TABLE HELPERS
 ------------------------------------------------------------
+
+local function TrimText(text)
+    local result = text or ""
+    result = string.gsub(result, "^%s+", "")
+    result = string.gsub(result, "%s+$", "")
+    return result
+end
+
+local function LimitTextLength(text, maxLength)
+    local result = text or ""
+
+    if string.len(result) > maxLength then
+        result = string.sub(result, 1, maxLength)
+    end
+
+    return result
+end
+
+local function CapitalizeWords(text)
+    local result = tostring(text or "")
+    result = string.lower(result)
+    result = string.gsub(result, "(%a)([%w']*)", function(firstChar, restChars)
+        return string.upper(firstChar) .. restChars
+    end)
+    return result
+end
+
+local function NormalizeChannelName(channelName)
+    local result = string.lower(channelName or "")
+    result = string.gsub(result, "%s+", "")
+    return result
+end
 
 local function CopyIntervals(source)
     local result = {}
 
-    if source then
-        for key, value in pairs(source) do
-            result[key] = tostring(value)
+    for channelName, defaultValue in pairs(CONST.DEFAULT_INTERVALS) do
+        local value = defaultValue
+
+        if type(source) == "table" and source[channelName] ~= nil then
+            value = tostring(source[channelName])
         end
+
+        result[channelName] = value
     end
 
     return result
@@ -105,51 +130,33 @@ end
 local function CopyEnabledChannels(source)
     local result = {}
 
-    if source then
-        for key, value in pairs(source) do
-            result[key] = value and true or false
+    for channelName, defaultValue in pairs(CONST.DEFAULT_ENABLED_CHANNELS) do
+        local value = defaultValue
+
+        if type(source) == "table" and source[channelName] ~= nil then
+            value = source[channelName] and true or false
         end
+
+        result[channelName] = value
     end
 
     return result
 end
 
-CopyCurrentSettings = function(source)
-    local result = {
-        intervals = {},
-        enabledChannels = {}
-    }
-
-    if source then
-        result.intervals = CopyIntervals(source.intervals)
-        result.enabledChannels = CopyEnabledChannels(source.enabledChannels)
-    end
-
-    for channelName, intervalValue in pairs(DATA.defaultCurrentSettings.intervals) do
-        if result.intervals[channelName] == nil then
-            result.intervals[channelName] = intervalValue
-        end
-    end
-
-    for channelName, enabledValue in pairs(DATA.defaultCurrentSettings.enabledChannels) do
-        if result.enabledChannels[channelName] == nil then
-            result.enabledChannels[channelName] = enabledValue
-        end
-    end
-
-    return result
-end
-
-CopyPresetSettings = function(source)
+local function CopyPresetData(source)
     local result = {
         message = "",
+        intervals = CopyIntervals(nil),
+        enabledChannels = CopyEnabledChannels(nil),
         order = nil,
         isDefault = false,
         isReadOnly = false,
     }
 
-    if source then
-        result.message = source.message or ""
+    if type(source) == "table" then
+        result.message = tostring(source.message or "")
+        result.intervals = CopyIntervals(source.intervals)
+        result.enabledChannels = CopyEnabledChannels(source.enabledChannels)
 
         if type(source.order) == "number" then
             result.order = source.order
@@ -167,25 +174,30 @@ CopyPresetSettings = function(source)
     return result
 end
 
+local function BuildDefaultPresetData()
+    return {
+        message = CONST.DEFAULT_PRESET_MESSAGE,
+        intervals = CopyIntervals(nil),
+        enabledChannels = CopyEnabledChannels(nil),
+        order = 0,
+        isDefault = true,
+        isReadOnly = true,
+    }
+end
+
+------------------------------------------------------------
+-- SAVED VARIABLE HELPERS
+------------------------------------------------------------
+
 local function GetCharacterKey()
     local characterName = UnitName("player") or "Unknown"
     local realmName = GetRealmName() or "UnknownRealm"
     return tostring(realmName) .. " - " .. tostring(characterName)
 end
 
-local function EnsureSavedVariables()
-    if not RTSpammerSave then
-        RTSpammerSave = {}
-    end
-
+local function EnsureRootSavedVariables()
     if type(RTSpammerSave) ~= "table" then
         RTSpammerSave = {}
-    end
-
-    if type(RTSpammerSave.current) ~= "table" then
-        RTSpammerSave.current = CopyCurrentSettings(DATA.defaultCurrentSettings)
-    else
-        RTSpammerSave.current = CopyCurrentSettings(RTSpammerSave.current)
     end
 
     if type(RTSpammerSave.presets) ~= "table" then
@@ -199,36 +211,9 @@ local function EnsureSavedVariables()
     if type(RTSpammerSave.presetOrderCounter) ~= "number" then
         RTSpammerSave.presetOrderCounter = 0
     end
+end
 
-    for presetName, presetData in pairs(RTSpammerSave.presets) do
-        local copiedPresetData = CopyPresetSettings(presetData)
-
-        if presetName == CONST.DEFAULT_PRESET_NAME then
-            copiedPresetData.message = CONST.DEFAULT_PRESET_MESSAGE
-            copiedPresetData.order = 0
-            copiedPresetData.isDefault = true
-            copiedPresetData.isReadOnly = true
-        else
-            copiedPresetData.isDefault = false
-            copiedPresetData.isReadOnly = false
-
-            if type(presetData) == "table" and type(presetData.order) == "number" then
-                copiedPresetData.order = presetData.order
-            else
-                RTSpammerSave.presetOrderCounter = RTSpammerSave.presetOrderCounter + 1
-                copiedPresetData.order = RTSpammerSave.presetOrderCounter
-            end
-        end
-
-        RTSpammerSave.presets[presetName] = copiedPresetData
-    end
-
-    RTSpammerSave.presets[CONST.DEFAULT_PRESET_NAME] = CopyPresetSettings(DATA.defaultEmbeddedPreset)
-    RTSpammerSave.presets[CONST.DEFAULT_PRESET_NAME].message = CONST.DEFAULT_PRESET_MESSAGE
-    RTSpammerSave.presets[CONST.DEFAULT_PRESET_NAME].order = 0
-    RTSpammerSave.presets[CONST.DEFAULT_PRESET_NAME].isDefault = true
-    RTSpammerSave.presets[CONST.DEFAULT_PRESET_NAME].isReadOnly = true
-
+local function EnsureCharacterSettings()
     local characterKey = GetCharacterKey()
 
     if type(RTSpammerSave.characterSettings[characterKey]) ~= "table" then
@@ -238,17 +223,68 @@ local function EnsureSavedVariables()
     if type(RTSpammerSave.characterSettings[characterKey].activePresetName) ~= "string" then
         RTSpammerSave.characterSettings[characterKey].activePresetName = nil
     end
+end
 
-    if RTSpammerSave.characterSettings[characterKey].activePresetName == nil
+local function NormalizePresets()
+    local migratedPresets = {}
+
+    for presetName, presetData in pairs(RTSpammerSave.presets) do
+        if type(presetName) == "string" and presetName ~= "" then
+            local normalizedPresetData = CopyPresetData(presetData)
+
+            if presetName == CONST.DEFAULT_PRESET_NAME then
+                normalizedPresetData = BuildDefaultPresetData()
+            else
+                normalizedPresetData.isDefault = false
+                normalizedPresetData.isReadOnly = false
+
+                if type(normalizedPresetData.order) ~= "number" then
+                    RTSpammerSave.presetOrderCounter = RTSpammerSave.presetOrderCounter + 1
+                    normalizedPresetData.order = RTSpammerSave.presetOrderCounter
+                end
+
+                if type(presetData) == "table" and type(presetData.intervals) ~= "table" and type(RTSpammerSave.current) == "table" then
+                    normalizedPresetData.intervals = CopyIntervals(RTSpammerSave.current.intervals)
+                    normalizedPresetData.enabledChannels = CopyEnabledChannels(RTSpammerSave.current.enabledChannels)
+                end
+            end
+
+            migratedPresets[presetName] = normalizedPresetData
+        end
+    end
+
+    migratedPresets[CONST.DEFAULT_PRESET_NAME] = BuildDefaultPresetData()
+    RTSpammerSave.presets = migratedPresets
+    RTSpammerSave.current = nil
+end
+
+local function EnsureDefaultActivePreset()
+    local characterKey = GetCharacterKey()
+    local characterData = RTSpammerSave.characterSettings[characterKey]
+    local activePresetName = characterData.activePresetName
+
+    if activePresetName == nil
         and type(RTSpammerSave.activePresetName) == "string"
         and RTSpammerSave.activePresetName ~= ""
         and RTSpammerSave.presets[RTSpammerSave.activePresetName] then
-        RTSpammerSave.characterSettings[characterKey].activePresetName = RTSpammerSave.activePresetName
+        characterData.activePresetName = RTSpammerSave.activePresetName
+        activePresetName = characterData.activePresetName
     end
 
-    if RTSpammerSave.activePresetName ~= nil and type(RTSpammerSave.activePresetName) ~= "string" then
-        RTSpammerSave.activePresetName = nil
+    if type(activePresetName) ~= "string"
+        or activePresetName == ""
+        or not RTSpammerSave.presets[activePresetName] then
+        characterData.activePresetName = CONST.DEFAULT_PRESET_NAME
     end
+
+    RTSpammerSave.activePresetName = nil
+end
+
+local function EnsureSavedVariables()
+    EnsureRootSavedVariables()
+    EnsureCharacterSettings()
+    NormalizePresets()
+    EnsureDefaultActivePreset()
 end
 
 local function GetPresetData(presetName)
@@ -258,39 +294,21 @@ local function GetPresetData(presetName)
         return nil
     end
 
-    if not RTSpammerSave.presets then
-        return nil
-    end
-
     return RTSpammerSave.presets[presetName]
 end
 
 local function IsDefaultPreset(presetName)
     local presetData = GetPresetData(presetName)
-
-    if not presetData then
-        return false
-    end
-
-    return presetData.isDefault == true
+    return presetData ~= nil and presetData.isDefault == true
 end
 
 local function IsPresetReadOnly(presetName)
     local presetData = GetPresetData(presetName)
-
-    if not presetData then
-        return false
-    end
-
-    return presetData.isReadOnly == true
+    return presetData ~= nil and presetData.isReadOnly == true
 end
 
 local function CanRenamePreset(presetName)
-    if type(presetName) ~= "string" or presetName == "" then
-        return false
-    end
-
-    if presetName == CONST.CREATE_NEW_PRESET_LABEL then
+    if type(presetName) ~= "string" or presetName == "" or presetName == CONST.CREATE_NEW_PRESET_LABEL then
         return false
     end
 
@@ -298,11 +316,7 @@ local function CanRenamePreset(presetName)
 end
 
 local function CanDeletePreset(presetName)
-    if type(presetName) ~= "string" or presetName == "" then
-        return false
-    end
-
-    if presetName == CONST.CREATE_NEW_PRESET_LABEL then
+    if type(presetName) ~= "string" or presetName == "" or presetName == CONST.CREATE_NEW_PRESET_LABEL then
         return false
     end
 
@@ -310,11 +324,7 @@ local function CanDeletePreset(presetName)
 end
 
 local function CanSavePreset(presetName)
-    if type(presetName) ~= "string" or presetName == "" then
-        return false
-    end
-
-    if presetName == CONST.CREATE_NEW_PRESET_LABEL then
+    if type(presetName) ~= "string" or presetName == "" or presetName == CONST.CREATE_NEW_PRESET_LABEL then
         return false
     end
 
@@ -325,15 +335,6 @@ local function GetCharacterActivePresetName()
     EnsureSavedVariables()
 
     local characterKey = GetCharacterKey()
-
-    if type(RTSpammerSave.characterSettings) ~= "table" then
-        RTSpammerSave.characterSettings = {}
-    end
-
-    if type(RTSpammerSave.characterSettings[characterKey]) ~= "table" then
-        RTSpammerSave.characterSettings[characterKey] = {}
-    end
-
     local presetName = RTSpammerSave.characterSettings[characterKey].activePresetName
 
     if type(presetName) ~= "string"
@@ -350,14 +351,6 @@ local function SetCharacterActivePresetName(presetName)
 
     local characterKey = GetCharacterKey()
 
-    if type(RTSpammerSave.characterSettings) ~= "table" then
-        RTSpammerSave.characterSettings = {}
-    end
-
-    if type(RTSpammerSave.characterSettings[characterKey]) ~= "table" then
-        RTSpammerSave.characterSettings[characterKey] = {}
-    end
-
     if type(presetName) == "string" and presetName ~= "" and RTSpammerSave.presets[presetName] then
         RTSpammerSave.characterSettings[characterKey].activePresetName = presetName
     else
@@ -365,16 +358,20 @@ local function SetCharacterActivePresetName(presetName)
     end
 end
 
-local function DisableSpammingOnly()
-    STATE.isSpamming = false
-    RefreshStatusOverlay()
+------------------------------------------------------------
+-- SPAM STATE HELPERS
+------------------------------------------------------------
 
-    if UI.startBtn then
-        UI.startBtn:SetText("Start Spamming")
+local function SetCooldownText(row, text)
+    if row and row.cdText then
+        if row.lastCooldownText ~= text then
+            row.cdText:SetText(text)
+            row.lastCooldownText = text
+        end
     end
 end
 
-local function StopSpammingState()
+local function StopSpamming(resetCooldowns)
     STATE.isSpamming = false
     RefreshStatusOverlay()
 
@@ -382,11 +379,10 @@ local function StopSpammingState()
         UI.startBtn:SetText("Start Spamming")
     end
 
-    for _, row in ipairs(UI.channelRows) do
-        row.nextSend = 0
-
-        if row.cdText then
-            row.cdText:SetText("|cff888888Ready|r")
+    if resetCooldowns then
+        for _, row in ipairs(UI.channelRows) do
+            row.nextSend = 0
+            SetCooldownText(row, "|cff888888Ready|r")
         end
     end
 end
@@ -415,93 +411,6 @@ local function GetMessageToSend()
     end
 
     return presetData.message or ""
-end
-
-local function UpdateMessageDirtyState()
-    if not UI.msgLabel then
-        return
-    end
-
-    local presetName = GetSelectedPresetName()
-
-    if IsPresetReadOnly(presetName) then
-        UI.msgLabel:SetText("Message to Spam:")
-        return
-    end
-
-    local currentMessage = ""
-    local savedMessage = GetSavedMessageForCurrentSelection()
-
-    if UI.msgEditBox then
-        currentMessage = UI.msgEditBox:GetText() or ""
-    end
-
-    if currentMessage ~= savedMessage then
-        UI.msgLabel:SetText("Message to Spam |cffffcc00(Not Saved)|r")
-    else
-        UI.msgLabel:SetText("Message to Spam:")
-    end
-end
-
-------------------------------------------------------------
--- TEXT HELPERS
-------------------------------------------------------------
-
-local function CapitalizeWords(text)
-    local result = tostring(text or "")
-    result = string.lower(result)
-    result = string.gsub(result, "(%a)([%w']*)", function(firstChar, restChars)
-        return string.upper(firstChar) .. restChars
-    end)
-    return result
-end
-
-local function NormalizeChannelName(channelName)
-    local result = string.lower(channelName or "")
-    result = string.gsub(result, "%s+", "")
-    return result
-end
-
-local function GetFixedChannelInfo(logicalChannelName)
-    if logicalChannelName == "General" then
-        local channelId, channelName = GetChannelName(1)
-        if channelId and channelId > 0 then
-            return channelId, channelName
-        end
-        return nil, nil
-    end
-
-    if logicalChannelName == "Trade" then
-        local channelId, channelName = GetChannelName(2)
-        if channelId and channelId > 0 then
-            return channelId, channelName
-        end
-        return nil, nil
-    end
-
-    if logicalChannelName == "World" then
-        local candidateIds = { 4, 5, 6 }
-        local i = 1
-
-        while i <= #candidateIds do
-            local candidateId = candidateIds[i]
-            local channelId, channelName = GetChannelName(candidateId)
-
-            if channelId and channelId > 0 and channelName then
-                local normalizedChannelName = NormalizeChannelName(channelName)
-
-                if string.find(normalizedChannelName, "global", 1, true) or string.find(normalizedChannelName, "world", 1, true) then
-                    return channelId, channelName
-                end
-            end
-
-            i = i + 1
-        end
-
-        return nil, nil
-    end
-
-    return nil, nil
 end
 
 ------------------------------------------------------------
@@ -534,100 +443,156 @@ local function SetMessageEditBoxReadOnly(isReadOnly)
     if isReadOnly then
         UI.msgEditBox:ClearFocus()
         UI.msgEditBox:EnableMouse(false)
+        if UI.msgEditBox.EnableKeyboard then
+            UI.msgEditBox:EnableKeyboard(false)
+        end
         UI.msgEditBox:SetTextColor(0.6, 0.6, 0.6)
     else
         UI.msgEditBox:EnableMouse(true)
+        if UI.msgEditBox.EnableKeyboard then
+            UI.msgEditBox:EnableKeyboard(true)
+        end
         UI.msgEditBox:SetTextColor(1, 1, 1)
     end
 end
 
-local loader = CreateFrame("Frame")
-loader:RegisterEvent("ADDON_LOADED")
-loader:SetScript("OnEvent", function(self, event, arg1)
-    if arg1 == addonName then
-        EnsureSavedVariables()
-        self:UnregisterEvent("ADDON_LOADED")
+local function UpdateCharacterCount()
+    if not UI.charCountText or not UI.msgEditBox then
+        return
     end
-end)
 
-local function GetCurrentSettings()
-    EnsureSavedVariables()
-    return RTSpammerSave.current
+    local textLength = string.len(UI.msgEditBox:GetText() or "")
+    UI.charCountText:SetText(string.format("Characters: %d/%d", textLength, CONST.MAX_MESSAGE_LENGTH))
 end
 
-local function TrimText(text)
-    local result = text or ""
-    result = string.gsub(result, "^%s+", "")
-    result = string.gsub(result, "%s+$", "")
-    return result
-end
-
-local function LimitTextLength(text, maxLength)
-    local result = text or ""
-    if string.len(result) > maxLength then
-        result = string.sub(result, 1, maxLength)
+local function UpdateMessageDirtyState()
+    if not UI.msgLabel then
+        return
     end
-    return result
-end
 
-------------------------------------------------------------
--- UI STATE REFRESH
-------------------------------------------------------------
+    local presetName = GetSelectedPresetName()
 
-local function RefreshPresetActionButtons()
-    local presetName = STATE.selectedPresetName
-    local canRename = CanRenamePreset(presetName)
-    local canDelete = CanDeletePreset(presetName)
-    local canSave = CanSavePreset(presetName)
+    if IsPresetReadOnly(presetName) then
+        UI.msgLabel:SetText("Message to Spam:")
+        return
+    end
 
-    if UI.savePresetBtn then
-        if canSave then
-            UI.savePresetBtn:Enable()
-            SetSaveButtonVisual("Save", 1, 0.82, 0)
-        else
-            SetSaveButtonVisual("Save", 0.5, 0.5, 0.5)
-            UI.savePresetBtn:Disable()
+    local currentMessage = ""
+    local savedMessage = GetSavedMessageForCurrentSelection()
+
+    if UI.msgEditBox then
+        currentMessage = UI.msgEditBox:GetText() or ""
+    end
+
+    if currentMessage ~= savedMessage then
+        UI.msgLabel:SetText("Message to Spam |cffffcc00(Not Saved)|r")
+        if UI.msgEditBox then
+            UI.msgEditBox:SetTextColor(0, 1, 0)
         end
-    end
-
-    if UI.renamePresetBtn then
-        if canRename then
-            UI.renamePresetBtn:Enable()
-        else
-            UI.renamePresetBtn:Disable()
-        end
-    end
-
-    if UI.deletePresetBtn then
-        if canDelete then
-            UI.deletePresetBtn:Enable()
-        else
-            UI.deletePresetBtn:Disable()
+    else
+        UI.msgLabel:SetText("Message to Spam:")
+        if UI.msgEditBox then
+            UI.msgEditBox:SetTextColor(1, 1, 1)
         end
     end
 end
 
+local function ApplyPixelStyle(frame, width, height)
+    frame:SetSize(width, height)
+    frame:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+    })
+    frame:SetBackdropColor(0, 0, 0, 0.9)
+    frame:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+end
+
 ------------------------------------------------------------
--- PRESET HELPERS
+-- CHANNEL HELPERS
 ------------------------------------------------------------
 
-local function SetSelectedPresetName(presetName)
-    STATE.selectedPresetName = presetName
+local function FindJoinedChannelByMatcher(matcher)
+    local index = 1
 
-    if presetName and presetName ~= "" and presetName ~= CONST.CREATE_NEW_PRESET_LABEL and GetPresetData(presetName) then
-        SetCharacterActivePresetName(presetName)
+    while true do
+        local channelId, channelName = GetChannelName(index)
+
+        if not channelId or channelId <= 0 then
+            break
+        end
+
+        if type(channelName) == "string" and channelName ~= "" and matcher(channelName, channelId) then
+            return channelId, channelName
+        end
+
+        index = index + 1
     end
 
-    if UI.presetDropdownText then
-        if presetName and presetName ~= "" then
-            UI.presetDropdownText:SetText(presetName)
+    return nil, nil
+end
+
+local function GetFixedChannelInfo(logicalChannelName)
+    if logicalChannelName == "General" then
+        return FindJoinedChannelByMatcher(function(channelName)
+            local normalizedChannelName = NormalizeChannelName(channelName)
+            return normalizedChannelName == "general"
+                or string.find(normalizedChannelName, "general", 1, true) ~= nil
+        end)
+    end
+
+    if logicalChannelName == "Trade" then
+        return FindJoinedChannelByMatcher(function(channelName)
+            local normalizedChannelName = NormalizeChannelName(channelName)
+            return normalizedChannelName == "trade"
+                or string.find(normalizedChannelName, "trade", 1, true) ~= nil
+        end)
+    end
+
+    if logicalChannelName == "World" then
+        return FindJoinedChannelByMatcher(function(channelName)
+            local normalizedChannelName = NormalizeChannelName(channelName)
+            return string.find(normalizedChannelName, "world", 1, true) ~= nil
+                or string.find(normalizedChannelName, "global", 1, true) ~= nil
+        end)
+    end
+
+    return nil, nil
+end
+
+local function RefreshAvailableChannels()
+    local visibleCount = 0
+
+    for _, row in ipairs(UI.channelRows) do
+        local isAvailable = false
+        local displayName = row.config.name
+
+        if row.config.chatType == "YELL" then
+            isAvailable = true
+            displayName = CapitalizeWords(row.config.name)
         else
-            UI.presetDropdownText:SetText("Select Preset")
+            local channelIndex, channelName = GetFixedChannelInfo(row.config.name)
+
+            if channelIndex and channelIndex > 0 then
+                isAvailable = true
+                displayName = CapitalizeWords(channelName) .. " (" .. tostring(channelIndex) .. ")"
+            end
+        end
+
+        if isAvailable then
+            visibleCount = visibleCount + 1
+            row:SetPoint("TOPLEFT", 25, -206 - ((visibleCount - 1) * 32))
+            row.text:SetText(displayName)
+            row:Show()
+        else
+            row:Hide()
         end
     end
-
-    RefreshPresetActionButtons()
 end
+
+------------------------------------------------------------
+-- PRESET <-> UI HELPERS
+------------------------------------------------------------
 
 GetSelectedPresetName = function()
     local presetName = STATE.selectedPresetName
@@ -654,7 +619,6 @@ local function GetSortedPresetNames()
     table.sort(presetNames, function(leftValue, rightValue)
         local leftPreset = GetPresetData(leftValue)
         local rightPreset = GetPresetData(rightValue)
-
         local leftOrder = 0
         local rightOrder = 0
 
@@ -670,15 +634,13 @@ local function GetSortedPresetNames()
             return leftOrder > rightOrder
         end
 
-        return tostring(leftValue) > tostring(rightValue)
+        return tostring(leftValue) < tostring(rightValue)
     end)
 
     local result = { CONST.CREATE_NEW_PRESET_LABEL }
 
-    local index = 1
-    while index <= #presetNames do
-        result[#result + 1] = presetNames[index]
-        index = index + 1
+    for _, presetName in ipairs(presetNames) do
+        result[#result + 1] = presetName
     end
 
     return result
@@ -746,70 +708,182 @@ local function GetNextNewPresetName()
     end
 end
 
-local function SaveCurrentSettingsFromUI()
-    EnsureSavedVariables()
-
-    local currentSettings = GetCurrentSettings()
-
-    currentSettings.intervals = {}
-    currentSettings.enabledChannels = {}
-
-    for _, row in ipairs(UI.channelRows) do
-        currentSettings.intervals[row.config.name] = row.timer:GetText() or ""
-        currentSettings.enabledChannels[row.config.name] = row.check:GetChecked() and true or false
-    end
-end
-
-local function SaveCurrentSettings()
-    SaveCurrentSettingsFromUI()
-end
-
-local function ApplyCurrentSettingsToUI(settingsData)
-    if not settingsData then
+local function ApplyPresetToUI(presetData)
+    if not presetData then
         return
     end
 
     for _, row in ipairs(UI.channelRows) do
         local channelName = row.config.name
-        local intervalValue = DATA.defaultCurrentSettings.intervals[channelName] or "30"
-        local enabledValue = false
+        row.timer:SetText(tostring(presetData.intervals[channelName] or CONST.DEFAULT_INTERVALS[channelName] or "30"))
+        row.check:SetChecked(presetData.enabledChannels[channelName] and true or false)
+    end
 
-        if settingsData.intervals and settingsData.intervals[channelName] ~= nil then
-            intervalValue = tostring(settingsData.intervals[channelName])
+    if UI.msgEditBox then
+        if presetData.isReadOnly == true then
+            UI.msgEditBox:SetText(CONST.DEFAULT_PRESET_READONLY_TEXT)
+        else
+            UI.msgEditBox:SetText(presetData.message or "")
         end
-
-        if settingsData.enabledChannels and settingsData.enabledChannels[channelName] then
-            enabledValue = true
-        end
-
-        row.timer:SetText(intervalValue)
-        row.check:SetChecked(enabledValue)
-    end
-end
-
-local function ApplyPresetMessageToUI(presetData)
-    if not UI.msgEditBox then
-        return
     end
 
-    local presetName = GetSelectedPresetName()
-    local isReadOnly = IsPresetReadOnly(presetName)
-
-    if isReadOnly then
-        UI.msgEditBox:SetText(CONST.DEFAULT_PRESET_READONLY_TEXT)
-    elseif presetData then
-        UI.msgEditBox:SetText(presetData.message or "")
-    else
-        UI.msgEditBox:SetText("")
-    end
-
-    SetMessageEditBoxReadOnly(isReadOnly)
+    SetMessageEditBoxReadOnly(presetData.isReadOnly == true)
+    UpdateCharacterCount()
     UpdateMessageDirtyState()
 end
 
-local function LoadCurrentSettingsToUI()
-    local currentSettings = GetCurrentSettings()
-    ApplyCurrentSettingsToUI(currentSettings)
+
+local function ReadPresetDataFromUI(basePresetData)
+    local result = CopyPresetData(basePresetData)
+
+    if UI.msgEditBox then
+        result.message = UI.msgEditBox:GetText() or ""
+    end
+
+    for _, row in ipairs(UI.channelRows) do
+        result.intervals[row.config.name] = row.timer:GetText() or CONST.DEFAULT_INTERVALS[row.config.name]
+        result.enabledChannels[row.config.name] = row.check:GetChecked() and true or false
+    end
+
+    return result
+end
+
+local function IsPresetDirty()
+    local presetName = GetSelectedPresetName()
+    local presetData = GetPresetData(presetName)
+
+    if not presetData or not CanSavePreset(presetName) then
+        return false
+    end
+
+    local currentPresetData = ReadPresetDataFromUI(presetData)
+
+    local savedMessage = tostring(presetData.message or "")
+    local currentMessage = tostring(currentPresetData.message or "")
+
+    if currentMessage ~= savedMessage then
+        return true
+    end
+
+    for channelName, savedInterval in pairs(presetData.intervals or {}) do
+        local currentInterval = tostring((currentPresetData.intervals or {})[channelName] or "")
+        if currentInterval ~= tostring(savedInterval or "") then
+            return true
+        end
+    end
+
+    for channelName, currentInterval in pairs((currentPresetData.intervals or {})) do
+        local savedInterval = tostring((presetData.intervals or {})[channelName] or "")
+        if tostring(currentInterval or "") ~= savedInterval then
+            return true
+        end
+    end
+
+    for channelName, savedEnabled in pairs(presetData.enabledChannels or {}) do
+        local currentEnabled = ((currentPresetData.enabledChannels or {})[channelName] == true)
+        if currentEnabled ~= (savedEnabled == true) then
+            return true
+        end
+    end
+
+    for channelName, currentEnabled in pairs((currentPresetData.enabledChannels or {})) do
+        local savedEnabled = ((presetData.enabledChannels or {})[channelName] == true)
+        if (currentEnabled == true) ~= savedEnabled then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function RefreshPresetActionButtons()
+    local presetName = STATE.selectedPresetName
+    local canRename = CanRenamePreset(presetName)
+    local canDelete = CanDeletePreset(presetName)
+    local canSave = CanSavePreset(presetName)
+    local isDirty = false
+
+    if canSave then
+        isDirty = IsPresetDirty()
+    end
+
+    if UI.savePresetBtn then
+        if canSave and isDirty then
+            UI.savePresetBtn:Enable()
+            SetSaveButtonVisual("Save", 1, 0.82, 0)
+        else
+            SetSaveButtonVisual("Save", 0.5, 0.5, 0.5)
+            UI.savePresetBtn:Disable()
+        end
+    end
+
+    if UI.renamePresetBtn then
+        if canRename then
+            UI.renamePresetBtn:Enable()
+        else
+            UI.renamePresetBtn:Disable()
+        end
+    end
+
+    if UI.deletePresetBtn then
+        if canDelete then
+            UI.deletePresetBtn:Enable()
+        else
+            UI.deletePresetBtn:Disable()
+        end
+    end
+end
+
+local function SetSelectedPresetName(presetName)
+    STATE.selectedPresetName = presetName
+
+    if presetName and presetName ~= "" and presetName ~= CONST.CREATE_NEW_PRESET_LABEL and GetPresetData(presetName) then
+        SetCharacterActivePresetName(presetName)
+    end
+
+    if UI.presetDropdownText then
+        if presetName and presetName ~= "" then
+            UI.presetDropdownText:SetText(presetName)
+        else
+            UI.presetDropdownText:SetText("Select Preset")
+        end
+    end
+
+    RefreshPresetActionButtons()
+    UpdateMessageDirtyState()
+end
+
+
+local function SaveActivePreset()
+    EnsureSavedVariables()
+
+    local presetName = GetSelectedPresetName()
+    local presetData = GetPresetData(presetName)
+
+    if not CanSavePreset(presetName) or not presetData then
+        return
+    end
+
+    local updatedPresetData = ReadPresetDataFromUI(presetData)
+    updatedPresetData.order = presetData.order
+    updatedPresetData.isDefault = false
+    updatedPresetData.isReadOnly = false
+
+    RTSpammerSave.presets[presetName] = updatedPresetData
+    SetCharacterActivePresetName(presetName)
+
+    UpdateMessageDirtyState()
+    RefreshPresetActionButtons()
+end
+
+local function SaveSelectedPresetSettingsFromUI()
+    local presetName = GetSelectedPresetName()
+
+    if not CanSavePreset(presetName) then
+        return
+    end
+
+    SaveActivePreset()
 end
 
 ------------------------------------------------------------
@@ -836,54 +910,55 @@ local function StopRenameMode()
     end
 end
 
-local function SaveActivePreset()
+local function GetMostRecentPresetNameExcluding(excludedPresetName)
     EnsureSavedVariables()
 
-    local presetName = GetSelectedPresetName()
+    local selectedPresetName = nil
+    local selectedOrder = -math.huge
 
-    if not CanSavePreset(presetName) then
-        return
+    for presetName, presetData in pairs(RTSpammerSave.presets or {}) do
+        if presetName ~= excludedPresetName
+            and presetName ~= CONST.DEFAULT_PRESET_NAME
+            and type(presetData) == "table"
+            and type(presetData.order) == "number" then
+            if presetData.order > selectedOrder then
+                selectedOrder = presetData.order
+                selectedPresetName = presetName
+            end
+        end
     end
 
-    local currentMessage = ""
-
-    if UI.msgEditBox then
-        currentMessage = UI.msgEditBox:GetText() or ""
+    if selectedPresetName and RTSpammerSave.presets[selectedPresetName] then
+        return selectedPresetName
     end
 
-    RTSpammerSave.presets[presetName] = CopyPresetSettings({
-        message = currentMessage,
-        order = RTSpammerSave.presets[presetName] and RTSpammerSave.presets[presetName].order or nil,
-        isDefault = false,
-        isReadOnly = false,
-    })
-
-    SetCharacterActivePresetName(presetName)
-
-    UpdateMessageDirtyState()
+    return CONST.DEFAULT_PRESET_NAME
 end
 
 local function CreateNewPreset()
     EnsureSavedVariables()
-    DisableSpammingOnly()
+    StopSpamming(false)
 
     local presetName = GetNextNewPresetName()
 
     RTSpammerSave.presetOrderCounter = (RTSpammerSave.presetOrderCounter or 0) + 1
 
-    RTSpammerSave.presets[presetName] = CopyPresetSettings({
+    local newPresetData = {
         message = "",
+        intervals = CopyIntervals(nil),
+        enabledChannels = CopyEnabledChannels(nil),
         order = RTSpammerSave.presetOrderCounter,
         isDefault = false,
         isReadOnly = false,
-    })
+    }
+
+    RTSpammerSave.presets[presetName] = newPresetData
 
     SetCharacterActivePresetName(presetName)
     SetSelectedPresetName(presetName)
     StopRenameMode()
-
-    LoadCurrentSettingsToUI()
-    ApplyPresetMessageToUI(RTSpammerSave.presets[presetName])
+    ApplyPresetToUI(RTSpammerSave.presets[presetName])
+    RefreshPresetActionButtons()
 end
 
 local function LoadPreset(presetName)
@@ -898,18 +973,16 @@ local function LoadPreset(presetName)
 
     EnsureSavedVariables()
 
-    if not GetPresetData(presetName) then
+    local presetData = GetPresetData(presetName)
+    if not presetData then
         return
     end
 
-    DisableSpammingOnly()
-
+    StopSpamming(false)
     SetCharacterActivePresetName(presetName)
     SetSelectedPresetName(presetName)
     StopRenameMode()
-
-    LoadCurrentSettingsToUI()
-    ApplyPresetMessageToUI(GetPresetData(presetName))
+    ApplyPresetToUI(presetData)
 end
 
 local function DeletePreset(presetName)
@@ -918,23 +991,23 @@ local function DeletePreset(presetName)
     end
 
     EnsureSavedVariables()
-    DisableSpammingOnly()
+    StopSpamming(false)
 
     RTSpammerSave.presets[presetName] = nil
 
+    local fallbackPresetName = GetMostRecentPresetNameExcluding(presetName)
     local characterKey = GetCharacterKey()
+
     if RTSpammerSave.characterSettings
-        and RTSpammerSave.characterSettings[characterKey]
-        and RTSpammerSave.characterSettings[characterKey].activePresetName == presetName then
-        RTSpammerSave.characterSettings[characterKey].activePresetName = CONST.DEFAULT_PRESET_NAME
+        and RTSpammerSave.characterSettings[characterKey] then
+        RTSpammerSave.characterSettings[characterKey].activePresetName = fallbackPresetName
     end
 
-    SetCharacterActivePresetName(CONST.DEFAULT_PRESET_NAME)
-    SetSelectedPresetName(CONST.DEFAULT_PRESET_NAME)
+    SetCharacterActivePresetName(fallbackPresetName)
+    SetSelectedPresetName(fallbackPresetName)
     StopRenameMode()
-
-    LoadCurrentSettingsToUI()
-    ApplyPresetMessageToUI(GetPresetData(CONST.DEFAULT_PRESET_NAME))
+    ApplyPresetToUI(GetPresetData(fallbackPresetName))
+    RefreshPresetActionButtons()
 end
 
 StaticPopupDialogs[CONST.SPAMMER_PRESET_DELETE_POPUP] = {
@@ -948,18 +1021,12 @@ StaticPopupDialogs[CONST.SPAMMER_PRESET_DELETE_POPUP] = {
     timeout = 0,
     whileDead = true,
     hideOnEscape = true,
-    preferredIndex = 3
+    preferredIndex = 3,
 }
 
-local function IsRenameBlocked(presetName)
-    return not CanRenamePreset(presetName)
-end
-
 local function StartRenameMode()
-    EnsureSavedVariables()
-
     local presetName = GetSelectedPresetName()
-    if IsRenameBlocked(presetName) then
+    if not CanRenamePreset(presetName) then
         return
     end
 
@@ -988,7 +1055,7 @@ local function RenameSelectedPreset(newName)
     EnsureSavedVariables()
 
     local oldName = GetSelectedPresetName()
-    if IsRenameBlocked(oldName) then
+    if not CanRenamePreset(oldName) then
         StopRenameMode()
         return
     end
@@ -1005,7 +1072,7 @@ local function RenameSelectedPreset(newName)
 
     finalName = GetUniquePresetName(finalName)
 
-    RTSpammerSave.presets[finalName] = CopyPresetSettings(RTSpammerSave.presets[oldName])
+    RTSpammerSave.presets[finalName] = CopyPresetData(RTSpammerSave.presets[oldName])
 
     if type(RTSpammerSave.presets[oldName]) == "table" and type(RTSpammerSave.presets[oldName].order) == "number" then
         RTSpammerSave.presets[finalName].order = RTSpammerSave.presets[oldName].order
@@ -1016,10 +1083,72 @@ local function RenameSelectedPreset(newName)
 
     RTSpammerSave.presets[oldName] = nil
     SetCharacterActivePresetName(finalName)
-
     SetSelectedPresetName(finalName)
     StopRenameMode()
 end
+
+------------------------------------------------------------
+-- LINK HELPERS
+------------------------------------------------------------
+
+local isLinkHookInstalled = false
+local originalChatEdit_InsertLink = nil
+
+local function IsMessageBoxActive()
+    if not UI.msgEditBox then
+        return false
+    end
+
+    if not UI.msgEditBox:IsShown() then
+        return false
+    end
+
+    return UI.msgEditBox:HasFocus()
+end
+
+local function InsertLinkIntoMessageBox(link)
+    local presetName = GetSelectedPresetName()
+
+    if IsPresetReadOnly(presetName) or not IsMessageBoxActive() or not link or link == "" then
+        return false
+    end
+
+    local currentText = UI.msgEditBox:GetText() or ""
+
+    if string.len(currentText) + string.len(link) > CONST.MAX_MESSAGE_LENGTH then
+        return false
+    end
+
+    UI.msgEditBox:Insert(link)
+    UI.msgEditBox:SetFocus()
+    UpdateCharacterCount()
+    UpdateMessageDirtyState()
+
+    return true
+end
+
+local function HookLinkInsertion()
+    if isLinkHookInstalled then
+        return
+    end
+
+    isLinkHookInstalled = true
+    originalChatEdit_InsertLink = ChatEdit_InsertLink
+
+    ChatEdit_InsertLink = function(link)
+        if InsertLinkIntoMessageBox(link) then
+            return true
+        end
+
+        if originalChatEdit_InsertLink then
+            return originalChatEdit_InsertLink(link)
+        end
+
+        return false
+    end
+end
+
+HookLinkInsertion()
 
 ------------------------------------------------------------
 -- UI BUILDERS
@@ -1057,7 +1186,7 @@ local function CreatePresetDropdown(parentFrame)
             menuList[1] = {
                 text = "No presets",
                 notCheckable = true,
-                isTitle = true
+                isTitle = true,
             }
         else
             local menuIndex = 1
@@ -1075,7 +1204,7 @@ local function CreatePresetDropdown(parentFrame)
                     func = function()
                         isMenuOpen = false
                         LoadPreset(presetName)
-                    end
+                    end,
                 }
                 menuIndex = menuIndex + 1
             end
@@ -1088,111 +1217,6 @@ local function CreatePresetDropdown(parentFrame)
     UI.presetDropdownButton:HookScript("OnHide", function()
         isMenuOpen = false
     end)
-end
-
-local isLinkHooksInstalled = false
-local originalSetItemRef = nil
-local originalChatEdit_InsertLink = nil
-
-local isLinkHooksInstalled = false
-local originalChatEdit_InsertLink = nil
-local originalChatEdit_GetActiveWindow = nil
-
-local function IsMessageBoxActive()
-    if not UI.msgEditBox then
-        return false
-    end
-
-    if not UI.msgEditBox:IsShown() then
-        return false
-    end
-
-    if UI.msgEditBox:HasFocus() then
-        return true
-    end
-
-    return false
-end
-
-local function InsertLinkIntoMessageBox(link)
-    local presetName = GetSelectedPresetName()
-
-    if IsPresetReadOnly(presetName) then
-        return false
-    end
-
-    if not IsMessageBoxActive() then
-        return false
-    end
-
-    if not link or link == "" then
-        return false
-    end
-
-    local currentText = UI.msgEditBox:GetText() or ""
-    local insertText = link
-
-    if string.len(currentText) + string.len(insertText) > 255 then
-        return false
-    end
-
-    UI.msgEditBox:Insert(insertText)
-    UI.msgEditBox:SetFocus()
-
-    if UI.charCountText then
-        UI.charCountText:SetText(string.format("Characters: %d/255", string.len(UI.msgEditBox:GetText() or "")))
-    end
-
-    UpdateMessageDirtyState()
-
-    return true
-end
-
-local function HookLinkInsertion()
-    if isLinkHooksInstalled then
-        return
-    end
-
-    isLinkHooksInstalled = true
-
-    originalChatEdit_GetActiveWindow = ChatEdit_GetActiveWindow
-    ChatEdit_GetActiveWindow = function(...)
-        if IsMessageBoxActive() then
-            return UI.msgEditBox
-        end
-
-        if originalChatEdit_GetActiveWindow then
-            return originalChatEdit_GetActiveWindow(...)
-        end
-
-        return nil
-    end
-
-    originalChatEdit_InsertLink = ChatEdit_InsertLink
-    ChatEdit_InsertLink = function(link)
-        if InsertLinkIntoMessageBox(link) then
-            return true
-        end
-
-        if originalChatEdit_InsertLink then
-            return originalChatEdit_InsertLink(link)
-        end
-
-        return false
-    end
-end
-
-HookLinkInsertion()
-
-local function ApplyPixelStyle(frame, width, height)
-    frame:SetSize(width, height)
-    frame:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
-    })
-    frame:SetBackdropColor(0, 0, 0, 0.9)
-    frame:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
 end
 
 ------------------------------------------------------------
@@ -1281,9 +1305,9 @@ function CreateSpammerTabContent(parent, onClose)
     UI.savePresetBtn:SetPoint("TOPRIGHT", -25, -56)
     UI.savePresetBtn:SetText("Save")
     UI.savePresetBtn:SetScript("OnClick", function()
-        SaveCurrentSettings()
         SaveActivePreset()
         UpdateMessageDirtyState()
+        RefreshPresetActionButtons()
         ShowSavedFeedback()
     end)
 
@@ -1294,21 +1318,16 @@ function CreateSpammerTabContent(parent, onClose)
 
     UI.msgEditBox = CreateFrame("EditBox", nil, msgBG)
     UI.msgEditBox:SetMultiLine(true)
-    UI.msgEditBox:SetMaxLetters(255)
+    UI.msgEditBox:SetMaxLetters(CONST.MAX_MESSAGE_LENGTH)
     UI.msgEditBox:SetFontObject(ChatFontNormal)
     UI.msgEditBox:SetPoint("TOPLEFT", 8, -8)
     UI.msgEditBox:SetPoint("BOTTOMRIGHT", -8, 8)
     UI.msgEditBox:SetAutoFocus(false)
 
-    UI.msgEditBox:SetScript("OnTextChanged", function(self)
-        local textValue = self:GetText() or ""
-        local textLength = string.len(textValue)
-
-        if UI.charCountText then
-            UI.charCountText:SetText(string.format("Characters: %d/255", textLength))
-        end
-
+    UI.msgEditBox:SetScript("OnTextChanged", function()
+        UpdateCharacterCount()
         UpdateMessageDirtyState()
+        RefreshPresetActionButtons()
     end)
 
     UI.msgEditBox:SetScript("OnEscapePressed", function(self)
@@ -1341,7 +1360,7 @@ function CreateSpammerTabContent(parent, onClose)
     UI.charCountText:SetPoint("TOPRIGHT", msgBG, "BOTTOMRIGHT", 0, -5)
     UI.charCountText:SetText("Characters: 0/255")
 
-    for i, config in ipairs(DATA.channelPool) do
+    for i, config in ipairs(CONST.CHANNEL_POOL) do
         local row = CreateFrame("Frame", nil, f)
         row:SetSize(600, 30)
         row:SetPoint("TOPLEFT", 25, -206 - ((i - 1) * 32))
@@ -1350,7 +1369,8 @@ function CreateSpammerTabContent(parent, onClose)
         row.check:SetPoint("LEFT", 0, 0)
         row.check:SetSize(24, 24)
         row.check:SetScript("OnClick", function()
-            SaveCurrentSettingsFromUI()
+            UpdateMessageDirtyState()
+            RefreshPresetActionButtons()
         end)
 
         row.text = row.check:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -1370,13 +1390,18 @@ function CreateSpammerTabContent(parent, onClose)
         row.timer:SetNumeric(true)
         row.timer:SetAutoFocus(false)
         row.timer:SetFontObject(ChatFontNormal)
-        row.timer:SetScript("OnTextChanged", function()
-            SaveCurrentSettingsFromUI()
+        row.timer:SetScript("OnEnterPressed", function(self)
+            self:ClearFocus()
+        end)
+        row.timer:SetScript("OnEditFocusLost", function()
+            UpdateMessageDirtyState()
+            RefreshPresetActionButtons()
         end)
 
         row.cdText = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         row.cdText:SetPoint("LEFT", tBG, "RIGHT", 15, 0)
         row.cdText:SetText("|cff888888Ready|r")
+        row.lastCooldownText = nil
 
         row.config = config
         row.nextSend = 0
@@ -1384,10 +1409,18 @@ function CreateSpammerTabContent(parent, onClose)
     end
 
     eventFrame:SetScript("OnUpdate", function(self, elapsed)
+        STATE.uiUpdateAccumulator = STATE.uiUpdateAccumulator + elapsed
+
         if UI.savePresetBtn and STATE.saveFeedbackResetAt > 0 and GetTime() >= STATE.saveFeedbackResetAt then
             SetSaveButtonVisual("Save", 1, 0.82, 0)
             STATE.saveFeedbackResetAt = 0
         end
+
+        if STATE.uiUpdateAccumulator < CONST.UI_UPDATE_INTERVAL then
+            return
+        end
+
+        STATE.uiUpdateAccumulator = 0
 
         local now = GetTime()
 
@@ -1402,15 +1435,14 @@ function CreateSpammerTabContent(parent, onClose)
                         colorCode = "|cff00ff00"
                     end
 
-                    row.cdText:SetText(string.format("%s%.1fs|r", colorCode, remaining))
+                    SetCooldownText(row, string.format("%s%.1fs|r", colorCode, remaining))
                 end
             elseif STATE.isSpamming and row.check:GetChecked() then
                 if row:IsShown() then
-                    row.cdText:SetText("|cffffcc00SENDING|r")
+                    SetCooldownText(row, "|cffffcc00SENDING|r")
                 end
 
                 local textValue = GetMessageToSend()
-
                 local intervalValue = tonumber(row.timer:GetText()) or 30
                 row.nextSend = now + intervalValue
 
@@ -1430,7 +1462,7 @@ function CreateSpammerTabContent(parent, onClose)
                 end
             else
                 if row:IsShown() then
-                    row.cdText:SetText("|cff888888Ready|r")
+                    SetCooldownText(row, "|cff888888Ready|r")
                 end
             end
         end
@@ -1438,52 +1470,19 @@ function CreateSpammerTabContent(parent, onClose)
 
     f:SetScript("OnShow", function()
         EnsureSavedVariables()
-
-        LoadCurrentSettingsToUI()
+        RefreshAvailableChannels()
 
         local presetName = GetCharacterActivePresetName()
 
         if presetName and GetPresetData(presetName) then
             SetSelectedPresetName(presetName)
-            ApplyPresetMessageToUI(GetPresetData(presetName))
+            ApplyPresetToUI(GetPresetData(presetName))
         else
             SetSelectedPresetName(CONST.DEFAULT_PRESET_NAME)
-            ApplyPresetMessageToUI(GetPresetData(CONST.DEFAULT_PRESET_NAME))
+            ApplyPresetToUI(GetPresetData(CONST.DEFAULT_PRESET_NAME))
         end
 
         StopRenameMode()
-
-        local visibleCount = 0
-
-        for _, row in ipairs(UI.channelRows) do
-            local isAvailable = false
-            local displayName = row.config.name
-
-            if row.config.chatType == "YELL" then
-                isAvailable = true
-                displayName = CapitalizeWords(row.config.name)
-            else
-                local channelIndex = nil
-                local channelName = nil
-
-                channelIndex, channelName = GetFixedChannelInfo(row.config.name)
-
-                if channelIndex and channelIndex > 0 then
-                    isAvailable = true
-                    displayName = CapitalizeWords(channelName) .. " (" .. tostring(channelIndex) .. ")"
-                end
-            end
-
-            if isAvailable then
-                visibleCount = visibleCount + 1
-                row:SetPoint("TOPLEFT", 25, -206 - ((visibleCount - 1) * 32))
-                row.text:SetText(displayName)
-                row:Show()
-            else
-                row:Hide()
-            end
-        end
-
         RefreshPresetActionButtons()
         UpdateMessageDirtyState()
     end)
@@ -1519,9 +1518,7 @@ function CreateSpammerTabContent(parent, onClose)
                 end
             end
         else
-            STATE.isSpamming = false
-            RefreshStatusOverlay()
-            UI.startBtn:SetText("Start Spamming")
+            StopSpamming(false)
         end
     end)
 
@@ -1548,9 +1545,22 @@ function CreateSpammerTabContent(parent, onClose)
         end
     end
 
-    LoadCurrentSettingsToUI()
+    RefreshAvailableChannels()
+    ApplyPresetToUI(GetPresetData(GetCharacterActivePresetName()))
     RefreshPresetActionButtons()
     StopRenameMode()
 
     return f
 end
+
+------------------------------------------------------------
+-- INITIALIZATION
+------------------------------------------------------------
+
+loader:RegisterEvent("ADDON_LOADED")
+loader:SetScript("OnEvent", function(self, event, arg1)
+    if arg1 == addonName then
+        EnsureSavedVariables()
+        self:UnregisterEvent("ADDON_LOADED")
+    end
+end)
