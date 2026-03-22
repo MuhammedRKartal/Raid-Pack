@@ -495,6 +495,14 @@ local function EnsureSavedVariables()
     end
 end
 
+local function ForceDisableOnLogin()
+    STATE.isAutoResponseEnabled = false
+
+    if type(RTAutoResponseSave) == "table" then
+        RTAutoResponseSave.enabled = false
+    end
+end
+
 local function GetCharacterActivePresetName()
     EnsureSavedVariables()
 
@@ -2099,6 +2107,7 @@ end
 
 local function CreateNewPreset()
     EnsureSavedVariables()
+    FlushActivePresetToSavedVariables()
 
     local presetName = GetNextNewPresetName()
     local newPresetData = CopyPresetData({
@@ -2733,7 +2742,16 @@ StaticPopupDialogs[CONST.AUTO_RESPONSE_COMMAND_DELETE_POPUP] = {
 ------------------------------------------------------------
 
 eventFrame:RegisterEvent("CHAT_MSG_WHISPER")
+eventFrame:RegisterEvent("PLAYER_LOGIN")
+
 eventFrame:SetScript("OnEvent", function(self, event, ...)
+    if event == "PLAYER_LOGIN" then
+        EnsureSavedVariables()
+        ForceDisableOnLogin()
+        RefreshEnableButton()
+        return
+    end
+
     if event ~= "CHAT_MSG_WHISPER" then
         return
     end
@@ -2867,6 +2885,11 @@ local function CreatePresetDropdown(parentFrame)
                             CreateNewPreset()
                         else
                             local currentPresetName = GetSelectedPresetName()
+
+                            if currentPresetName and currentPresetName ~= CONST.CREATE_NEW_PRESET_LABEL then
+                                FlushActivePresetToSavedVariables()
+                            end
+
                             local shouldDisableAutoResponse = currentPresetName ~= presetName
                             LoadPresetIntoUI(presetName, shouldDisableAutoResponse)
                         end
@@ -3433,6 +3456,7 @@ function CreateAutoResponseTabContent(parent, onClose)
     end)
 
     f:SetScript("OnHide", function()
+        FlushActivePresetToSavedVariables()
         StopCommandRowDrag()
     end)
 

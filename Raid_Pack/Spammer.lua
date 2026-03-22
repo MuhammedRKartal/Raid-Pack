@@ -531,29 +531,38 @@ local function FindJoinedChannelByMatcher(matcher)
     return nil, nil
 end
 
-local function GetFixedChannelInfo(logicalChannelName)
-    if logicalChannelName == "General" then
-        return FindJoinedChannelByMatcher(function(channelName)
-            local normalizedChannelName = NormalizeChannelName(channelName)
-            return normalizedChannelName == "general"
-                or string.find(normalizedChannelName, "general", 1, true) ~= nil
-        end)
+local function GetFixedChannelInfo(channelKey)
+    local normalizedKey = string.lower(tostring(channelKey or ""))
+
+    local function IsMatch(name)
+        local normalizedName = string.lower(tostring(name or "")):gsub("%s+", "")
+
+        if normalizedKey == "world" then
+            return string.find(normalizedName, "world", 1, true) ~= nil
+                or string.find(normalizedName, "global", 1, true) ~= nil
+        end
+
+        if normalizedKey == "trade" then
+            return string.find(normalizedName, "trade", 1, true) ~= nil
+        end
+
+        if normalizedKey == "lfg" then
+            return string.find(normalizedName, "lookingforgroup", 1, true) ~= nil
+                or normalizedName == "lfg"
+        end
+
+        return string.find(normalizedName, normalizedKey, 1, true) ~= nil
     end
 
-    if logicalChannelName == "Trade" then
-        return FindJoinedChannelByMatcher(function(channelName)
-            local normalizedChannelName = NormalizeChannelName(channelName)
-            return normalizedChannelName == "trade"
-                or string.find(normalizedChannelName, "trade", 1, true) ~= nil
-        end)
-    end
+    local channelList = { GetChannelList() }
 
-    if logicalChannelName == "World" then
-        return FindJoinedChannelByMatcher(function(channelName)
-            local normalizedChannelName = NormalizeChannelName(channelName)
-            return string.find(normalizedChannelName, "world", 1, true) ~= nil
-                or string.find(normalizedChannelName, "global", 1, true) ~= nil
-        end)
+    for index = 1, #channelList, 2 do
+        local channelId = channelList[index]
+        local channelName = channelList[index + 1]
+
+        if type(channelId) == "number" and type(channelName) == "string" and IsMatch(channelName) then
+            return channelId, channelName
+        end
     end
 
     return nil, nil
