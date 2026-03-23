@@ -26,6 +26,10 @@ local TAB_DEFINITIONS = {
         creator = CreateSpammerTabContent
     },
     {
+        name = "Auto Reply",
+        creator = CreateAutoResponseTabContent
+    },
+    {
         name = "Master Looter",
         creator = CreateMasterLooterTabContent
     },
@@ -33,10 +37,6 @@ local TAB_DEFINITIONS = {
         name = "Roll Manager",
         creator = CreateRollManagerTabContent
     },
-    {
-        name = "Auto Reply",
-        creator = CreateAutoResponseTabContent
-    }
 }
 
 local function EnsureStatusOverlaySavedVariables()
