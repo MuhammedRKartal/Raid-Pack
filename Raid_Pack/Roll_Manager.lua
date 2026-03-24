@@ -56,7 +56,12 @@ local UI_CONSTANTS = {
     LIST_LABEL_Y = -204,
     CONTENT_TOP_Y = -230,
     FOOTER_Y = 12,
-    RIGHT_COLUMN_X = 452
+
+    OUTER_LEFT = 20,
+    OUTER_RIGHT = 20,
+    SPLIT_GAP = 4,
+    PANEL_BOTTOM_Y = 58,
+    HEADER_RIGHT_OFFSET = 20
 }
 
 local defaultSettings = {
@@ -83,7 +88,8 @@ local rollState = {
     rollHistoryViewIndex = 0,
     isEditingMSChanges = false,
     rollEntries = {},
-    currentWinnerNames = {}
+    currentWinnerNames = {},
+    historyStruckIndices = {}
 }
 
 local uiRefs = {
@@ -139,7 +145,11 @@ local uiRefs = {
 
     closeButton = nil,
     clearWinnersSavedButton = nil,
-    clearRollsSavedButton = nil
+    clearRollsSavedButton = nil,
+
+    historyRowButtons = {},
+    historyRowTexts = {},
+    historyRowStrikeLines = {}
 }
 
 local function TryGetElvUISkinModule()
@@ -1278,6 +1288,100 @@ local function EnsureRollRowButton(indexValue)
     return rowButton, rowText, strikeLine
 end
 
+local function TrimHistoryRowTextToWidth(fontString, fullText, maxWidth)
+    if not fontString then
+        return fullText or ""
+    end
+
+    local textValue = fullText or ""
+    fontString:SetText(textValue)
+
+    if (fontString:GetStringWidth() or 0) <= maxWidth then
+        return textValue
+    end
+
+    local ellipsisText = "..."
+    local leftIndex = 1
+    local rightIndex = string.len(textValue)
+    local bestText = ellipsisText
+
+    while leftIndex <= rightIndex do
+        local middleIndex = math.floor((leftIndex + rightIndex) / 2)
+        local candidateText = string.sub(textValue, 1, middleIndex) .. ellipsisText
+
+        fontString:SetText(candidateText)
+
+        if (fontString:GetStringWidth() or 0) <= maxWidth then
+            bestText = candidateText
+            leftIndex = middleIndex + 1
+        else
+            rightIndex = middleIndex - 1
+        end
+    end
+
+    fontString:SetText(bestText)
+    return bestText
+end
+
+local function ToggleWinnerHistoryStrikeByIndex(indexValue)
+    if not rollState.historyStruckIndices then
+        rollState.historyStruckIndices = {}
+    end
+
+    rollState.historyStruckIndices[indexValue] = not rollState.historyStruckIndices[indexValue]
+end
+
+local function EnsureHistoryRowButton(indexValue)
+    if uiRefs.historyRowButtons[indexValue] then
+        return
+            uiRefs.historyRowButtons[indexValue],
+            uiRefs.historyRowTexts[indexValue],
+            uiRefs.historyRowStrikeLines[indexValue]
+    end
+
+    local rowButton = CreateFrame("Button", nil, uiRefs.historyScrollChild, "UIPanelButtonTemplate")
+    rowButton:SetHeight(20)
+    rowButton:RegisterForClicks("LeftButtonUp")
+    rowButton:SetNormalTexture(nil)
+    rowButton:SetHighlightTexture(nil)
+    rowButton:SetPushedTexture(nil)
+    rowButton:SetDisabledTexture(nil)
+
+    if indexValue == 1 then
+        rowButton:SetPoint("TOPLEFT", 0, 0)
+        rowButton:SetPoint("TOPRIGHT", 0, 0)
+    else
+        rowButton:SetPoint("TOPLEFT", uiRefs.historyRowButtons[indexValue - 1], "BOTTOMLEFT", 0, -2)
+        rowButton:SetPoint("TOPRIGHT", uiRefs.historyRowButtons[indexValue - 1], "BOTTOMRIGHT", 0, -2)
+    end
+
+    local rowText = rowButton:CreateFontString(nil, "OVERLAY", "ChatFontSmall")
+    rowText:SetPoint("LEFT", 6, 0)
+    rowText:SetPoint("RIGHT", -6, 0)
+    rowText:SetJustifyH("LEFT")
+    rowText:SetJustifyV("MIDDLE")
+
+    local strikeLine = rowButton:CreateTexture(nil, "ARTWORK")
+    strikeLine:SetTexture("Interface\\Buttons\\WHITE8X8")
+    strikeLine:SetHeight(1)
+    strikeLine:SetVertexColor(0.8, 0.8, 0.8, 0.95)
+    strikeLine:Hide()
+
+    rowButton.text = rowText
+    rowButton.strikeLine = strikeLine
+
+    rowButton:SetScript("OnClick", function()
+        ToggleWinnerHistoryStrikeByIndex(indexValue)
+        RefreshRollUI()
+    end)
+
+    uiRefs.historyRowButtons[indexValue] = rowButton
+    uiRefs.historyRowTexts[indexValue] = rowText
+    uiRefs.historyRowStrikeLines[indexValue] = strikeLine
+
+    return rowButton, rowText, strikeLine
+end
+
 local function RefreshRollListUI()
     if not uiRefs.logLabel or not uiRefs.rollScrollChild or not uiRefs.logBg then
         return
@@ -1400,42 +1504,102 @@ local function RefreshRollListUI()
 end
 
 local function RefreshWinnerHistoryUI()
-    if not uiRefs.historyText then
+    if not uiRefs.historyScrollChild or not uiRefs.historyBg then
         return
     end
 
     EnsureSavedVariables()
 
-    local historyLines = {}
-    local winnerHistory = RTRollManagerSave.winnerHistory or {}
-    local historyIndex = 1
+    if not rollState.historyStruckIndices then
+        rollState.historyStruckIndices = {}
+    end
 
-    while historyIndex <= #winnerHistory do
-        local entry = winnerHistory[historyIndex]
-        historyLines[#historyLines + 1] = string.format(
-            "%s - %s - %s - %d",
-            entry.rollType or "-",
+    local winnerHistory = RTRollManagerSave.winnerHistory or {}
+    local availableWidth = uiRefs.historyBg:GetWidth() - 40
+
+    if availableWidth < 80 then
+        availableWidth = 80
+    end
+
+    if #winnerHistory == 0 then
+        local rowButton, rowText, strikeLine = EnsureHistoryRowButton(1)
+        rowButton:SetWidth(availableWidth)
+        rowButton:Show()
+        rowText:SetText("No winners yet.")
+        rowText:SetTextColor(1, 1, 1)
+        strikeLine:Hide()
+
+        local emptyTextWidth = rowText:GetStringWidth() or availableWidth
+        if emptyTextWidth < 1 then
+            emptyTextWidth = availableWidth
+        end
+
+        strikeLine:ClearAllPoints()
+        strikeLine:SetPoint("LEFT", rowText, "LEFT", 0, 0)
+        strikeLine:SetPoint("RIGHT", rowText, "LEFT", emptyTextWidth, 0)
+        strikeLine:SetPoint("CENTER", rowText, "CENTER", 0, 0)
+
+        local hideIndex = 2
+        while uiRefs.historyRowButtons[hideIndex] do
+            uiRefs.historyRowButtons[hideIndex]:Hide()
+            hideIndex = hideIndex + 1
+        end
+
+        uiRefs.historyScrollChild:SetWidth(availableWidth)
+        uiRefs.historyScrollChild:SetHeight(24)
+        uiRefs.historyScrollFrame:UpdateScrollChildRect()
+        return
+    end
+
+    local index = 1
+    while index <= #winnerHistory do
+        local rowButton, rowText, strikeLine = EnsureHistoryRowButton(index)
+        local entry = winnerHistory[index]
+
+        rowButton:SetWidth(availableWidth)
+        rowButton:Show()
+
+        local fullText = string.format(
+            "%s - %s - %s(%d)",
             entry.itemLink or "-",
             entry.winnerName or "-",
+            entry.rollType or "-",
             entry.rollValue or 0
         )
-        historyIndex = historyIndex + 1
+
+        rowText:SetText(fullText)
+        rowText:SetFont(STANDARD_TEXT_FONT, 12, "")
+
+        if rollState.historyStruckIndices[index] then
+            rowText:SetTextColor(0.65, 0.65, 0.65)
+            strikeLine:Show()
+        else
+            rowText:SetTextColor(1, 1, 1)
+            strikeLine:Hide()
+        end
+
+        local textWidth = rowText:GetStringWidth() or (availableWidth - 12)
+        if textWidth < 1 then
+            textWidth = availableWidth - 12
+        end
+
+        strikeLine:ClearAllPoints()
+        strikeLine:SetPoint("LEFT", rowText, "LEFT", 0, 0)
+        strikeLine:SetPoint("RIGHT", rowText, "LEFT", textWidth, 0)
+        strikeLine:SetPoint("CENTER", rowText, "CENTER", 0, 0)
+
+        index = index + 1
     end
 
-    if #historyLines == 0 then
-        uiRefs.historyText:SetText("No winners yet.")
-    else
-        uiRefs.historyText:SetText(table.concat(historyLines, "\n"))
+    local hideIndex = index
+    while uiRefs.historyRowButtons[hideIndex] do
+        uiRefs.historyRowButtons[hideIndex]:Hide()
+        hideIndex = hideIndex + 1
     end
 
-    local availableWidth = uiRefs.historyBg:GetWidth() - 40
-    if availableWidth < 50 then
-        availableWidth = 50
-    end
-
+    local contentHeight = (#winnerHistory * 22) + 4
     uiRefs.historyScrollChild:SetWidth(availableWidth)
-    uiRefs.historyText:SetWidth(availableWidth)
-    uiRefs.historyScrollChild:SetHeight(GetSafeStringHeight(uiRefs.historyText, 20) + 20)
+    uiRefs.historyScrollChild:SetHeight(contentHeight)
     uiRefs.historyScrollFrame:UpdateScrollChildRect()
 end
 
@@ -1961,14 +2125,15 @@ end
 local function CreateWinnersSection(parent, skinModule)
     local announceWinnersButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     announceWinnersButton:SetSize(UI_CONSTANTS.LARGE_BUTTON_WIDTH, 24)
-    announceWinnersButton:SetPoint("TOPLEFT", UI_CONSTANTS.LEFT_MARGIN, UI_CONSTANTS.WINNERS_Y)
+    announceWinnersButton:SetPoint("TOPLEFT", parent, "TOPLEFT", UI_CONSTANTS.OUTER_LEFT, UI_CONSTANTS.WINNERS_Y)
     announceWinnersButton:SetText("Announce Winners")
     HandleButtonSkin(skinModule, announceWinnersButton)
 
     local winnerLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     winnerLabel:SetPoint("LEFT", announceWinnersButton, "RIGHT", 10, 0)
-    winnerLabel:SetWidth(UI_CONSTANTS.WINNER_LABEL_WIDTH)
+    winnerLabel:SetPoint("RIGHT", parent, "CENTER", -UI_CONSTANTS.SPLIT_GAP - 6, 0)
     winnerLabel:SetJustifyH("LEFT")
+    winnerLabel:SetJustifyV("MIDDLE")
     winnerLabel:SetText("")
 
     uiRefs.announceWinnersButton = announceWinnersButton
@@ -1998,12 +2163,13 @@ end
 
 local function CreateRollLogSection(parent, skinModule)
     local logLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    logLabel:SetPoint("TOPLEFT", UI_CONSTANTS.LEFT_MARGIN, UI_CONSTANTS.LIST_LABEL_Y)
+    logLabel:SetPoint("TOPLEFT", parent, "TOPLEFT", UI_CONSTANTS.OUTER_LEFT, UI_CONSTANTS.LIST_LABEL_Y)
     logLabel:SetText("Roll List:")
 
     local rollHeaderLinkButton = CreateFrame("Button", nil, parent)
     rollHeaderLinkButton:SetPoint("LEFT", logLabel, "RIGHT", 6, 0)
-    rollHeaderLinkButton:SetSize(UI_CONSTANTS.ROLL_HEADER_WIDTH, 20)
+    rollHeaderLinkButton:SetPoint("RIGHT", parent, "CENTER", -UI_CONSTANTS.SPLIT_GAP - 120, 0)
+    rollHeaderLinkButton:SetHeight(20)
     rollHeaderLinkButton:RegisterForClicks("LeftButtonUp")
 
     local rollHeaderLinkText = rollHeaderLinkButton:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -2012,8 +2178,8 @@ local function CreateRollLogSection(parent, skinModule)
     rollHeaderLinkButton.text = rollHeaderLinkText
 
     local logBg = CreateFrame("Frame", nil, parent)
-    logBg:SetPoint("TOPLEFT", UI_CONSTANTS.LEFT_MARGIN, UI_CONSTANTS.CONTENT_TOP_Y)
-    logBg:SetPoint("BOTTOMRIGHT", -UI_CONSTANTS.RIGHT_COLUMN_X, 58)
+    logBg:SetPoint("TOPLEFT", parent, "TOPLEFT", UI_CONSTANTS.OUTER_LEFT, UI_CONSTANTS.CONTENT_TOP_Y)
+    logBg:SetPoint("BOTTOMRIGHT", parent, "BOTTOM", -UI_CONSTANTS.SPLIT_GAP, UI_CONSTANTS.PANEL_BOTTOM_Y)
     ApplyPanelStyle(logBg)
 
     local rightHistoryButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
@@ -2106,12 +2272,12 @@ end
 
 local function CreateMSChangesSection(parent, skinModule)
     local msChangesLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    msChangesLabel:SetPoint("TOPLEFT", UI_CONSTANTS.RIGHT_COLUMN_X, UI_CONSTANTS.TOP_MARGIN)
+    msChangesLabel:SetPoint("TOPLEFT", parent, "TOP", UI_CONSTANTS.SPLIT_GAP, UI_CONSTANTS.TOP_MARGIN)
     msChangesLabel:SetText("MS Changes:")
 
     local msChangesToggleButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     msChangesToggleButton:SetSize(70, 24)
-    msChangesToggleButton:SetPoint("TOPRIGHT", -20, -14)
+    msChangesToggleButton:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -UI_CONSTANTS.OUTER_RIGHT, -14)
     msChangesToggleButton:SetText("Edit")
     HandleButtonSkin(skinModule, msChangesToggleButton)
 
@@ -2122,8 +2288,8 @@ local function CreateMSChangesSection(parent, skinModule)
     HandleButtonSkin(skinModule, msChangesAnnounceButton)
 
     local msChangesBg = CreateFrame("Frame", nil, parent)
-    msChangesBg:SetPoint("TOPLEFT", UI_CONSTANTS.RIGHT_COLUMN_X, UI_CONSTANTS.TOP_SECTION_Y)
-    msChangesBg:SetPoint("TOPRIGHT", -20, UI_CONSTANTS.TOP_SECTION_Y)
+    msChangesBg:SetPoint("TOPLEFT", parent, "TOP", UI_CONSTANTS.SPLIT_GAP, UI_CONSTANTS.TOP_SECTION_Y)
+    msChangesBg:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -UI_CONSTANTS.OUTER_RIGHT, UI_CONSTANTS.TOP_SECTION_Y)
     msChangesBg:SetHeight(UI_CONSTANTS.MS_CHANGES_HEIGHT)
     ApplyPanelStyle(msChangesBg)
 
@@ -2201,12 +2367,12 @@ end
 
 local function CreateWinnerHistorySection(parent)
     local historyLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    historyLabel:SetPoint("TOPLEFT", UI_CONSTANTS.RIGHT_COLUMN_X, UI_CONSTANTS.LIST_LABEL_Y)
+    historyLabel:SetPoint("TOPLEFT", parent, "TOP", UI_CONSTANTS.SPLIT_GAP, UI_CONSTANTS.LIST_LABEL_Y)
     historyLabel:SetText("Latest Winners:")
 
     local historyBg = CreateFrame("Frame", nil, parent)
-    historyBg:SetPoint("TOPLEFT", UI_CONSTANTS.RIGHT_COLUMN_X, UI_CONSTANTS.CONTENT_TOP_Y)
-    historyBg:SetPoint("BOTTOMRIGHT", -20, 58)
+    historyBg:SetPoint("TOPLEFT", parent, "TOP", UI_CONSTANTS.SPLIT_GAP, UI_CONSTANTS.CONTENT_TOP_Y)
+    historyBg:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -UI_CONSTANTS.OUTER_RIGHT, UI_CONSTANTS.PANEL_BOTTOM_Y)
     ApplyPanelStyle(historyBg)
 
     local historyScrollFrame = CreateFrame("ScrollFrame", "RTRollManagerHistoryScrollFrame", historyBg, "UIPanelScrollFrameTemplate")
@@ -2217,15 +2383,9 @@ local function CreateWinnerHistorySection(parent)
     historyScrollChild:SetSize(1, 1)
     historyScrollFrame:SetScrollChild(historyScrollChild)
 
-    local historyText = historyScrollChild:CreateFontString(nil, "OVERLAY", "ChatFontSmall")
-    historyText:SetPoint("TOPLEFT", 0, 0)
-    historyText:SetJustifyH("LEFT")
-    historyText:SetJustifyV("TOP")
-
     uiRefs.historyBg = historyBg
     uiRefs.historyScrollFrame = historyScrollFrame
     uiRefs.historyScrollChild = historyScrollChild
-    uiRefs.historyText = historyText
 end
 
 local function CreateFooterButtons(parent, skinModule, onClose)

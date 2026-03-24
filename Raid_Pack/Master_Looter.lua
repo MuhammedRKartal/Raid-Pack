@@ -583,6 +583,8 @@ function TML.LOGIC.DistributeLoot()
 
     local candidateMap = TML.HELPER.BuildMasterLootCandidateMap()
     local lootItemCount = GetNumLootItems()
+    local playerName = TML.HELPER.GetPlayerName()
+    local selfCandidateIndex = candidateMap[playerName]
 
     for slotIndex = 1, lootItemCount do
         local _, _, _, quality = GetLootSlotInfo(slotIndex)
@@ -591,6 +593,10 @@ function TML.LOGIC.DistributeLoot()
         if itemLink and quality then
             local collectorName = TML.ITEM.GetCollectorNameForItem(itemLink, quality)
             local candidateIndex = candidateMap[collectorName]
+
+            if not candidateIndex then
+                candidateIndex = selfCandidateIndex
+            end
 
             if candidateIndex then
                 GiveMasterLoot(slotIndex, candidateIndex)
@@ -756,7 +762,7 @@ function TML.REFRESH.UpdateToggleButtonText()
     end
 
     if TML.STATE.isEnabled then
-        TML.UI.toggleButton:SetText("Master Looter Enabled")
+        TML.UI.toggleButton:SetText("|cff00ff00Enabled|r")
     else
         TML.UI.toggleButton:SetText("Start Master Looter")
     end
