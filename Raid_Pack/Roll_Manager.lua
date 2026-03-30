@@ -69,7 +69,8 @@ local defaultSettings = {
     useRaidWarning = true,
     winnerHistory = {},
     rollHistory = {},
-    msChangesText = ""
+    msChangesText = "",
+    winnerHistoryIdCounter = 0
 }
 
 local rollState = {
@@ -208,6 +209,16 @@ local function EnsureSavedVariables()
     if type(RTRollManagerSave.msChangesText) ~= "string" then
         RTRollManagerSave.msChangesText = ""
     end
+
+    if type(RTRollManagerSave.winnerHistoryIdCounter) ~= "number" then
+        RTRollManagerSave.winnerHistoryIdCounter = 0
+    end
+end
+
+local function GetNextWinnerHistoryId()
+    EnsureSavedVariables()
+    RTRollManagerSave.winnerHistoryIdCounter = RTRollManagerSave.winnerHistoryIdCounter + 1
+    return RTRollManagerSave.winnerHistoryIdCounter
 end
 
 local function GetSafeStringHeight(fontString, fallbackValue)
@@ -718,6 +729,7 @@ local function AddWinnersToHistory()
         local winnerName = rollState.currentWinnerNames[winnerIndex]
 
         table.insert(winnerHistory, 1, {
+            id = GetNextWinnerHistoryId(),
             rollType = rollState.currentRollType or "-",
             itemLink = rollState.currentItemLink or "-",
             winnerName = winnerName or "-",
@@ -1323,12 +1335,16 @@ local function TrimHistoryRowTextToWidth(fontString, fullText, maxWidth)
     return bestText
 end
 
-local function ToggleWinnerHistoryStrikeByIndex(indexValue)
+local function ToggleWinnerHistoryStrikeById(entryId)
+    if not entryId then
+        return
+    end
+
     if not rollState.historyStruckIndices then
         rollState.historyStruckIndices = {}
     end
 
-    rollState.historyStruckIndices[indexValue] = not rollState.historyStruckIndices[indexValue]
+    rollState.historyStruckIndices[entryId] = not rollState.historyStruckIndices[entryId]
 end
 
 local function EnsureHistoryRowButton(indexValue)
@@ -1370,8 +1386,8 @@ local function EnsureHistoryRowButton(indexValue)
     rowButton.text = rowText
     rowButton.strikeLine = strikeLine
 
-    rowButton:SetScript("OnClick", function()
-        ToggleWinnerHistoryStrikeByIndex(indexValue)
+    rowButton:SetScript("OnClick", function(self)
+        ToggleWinnerHistoryStrikeById(self.entryId)
         RefreshRollUI()
     end)
 
@@ -1515,6 +1531,14 @@ local function RefreshWinnerHistoryUI()
     end
 
     local winnerHistory = RTRollManagerSave.winnerHistory or {}
+    local historyIndex = 1
+    while historyIndex <= #winnerHistory do
+        if winnerHistory[historyIndex] and winnerHistory[historyIndex].id == nil then
+            winnerHistory[historyIndex].id = GetNextWinnerHistoryId()
+        end
+        historyIndex = historyIndex + 1
+    end
+
     local availableWidth = uiRefs.historyBg:GetWidth() - 40
 
     if availableWidth < 80 then
@@ -1556,6 +1580,8 @@ local function RefreshWinnerHistoryUI()
         local rowButton, rowText, strikeLine = EnsureHistoryRowButton(index)
         local entry = winnerHistory[index]
 
+        rowButton.entryId = entry.id
+
         rowButton:SetWidth(availableWidth)
         rowButton:Show()
 
@@ -1570,7 +1596,7 @@ local function RefreshWinnerHistoryUI()
         rowText:SetText(fullText)
         rowText:SetFont(STANDARD_TEXT_FONT, 12, "")
 
-        if rollState.historyStruckIndices[index] then
+        if entry.id and rollState.historyStruckIndices[entry.id] then
             rowText:SetTextColor(0.65, 0.65, 0.65)
             strikeLine:Show()
         else
