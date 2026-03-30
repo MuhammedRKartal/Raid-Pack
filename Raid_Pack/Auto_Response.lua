@@ -86,13 +86,13 @@ local CONST = {
     CHAT_MESSAGE_MAX_LENGTH = 255,
     DEFAULT_RESPONSE_COOLDOWN_SECONDS = 450,
 
-    HELP_COMMAND_DISPLAY_TEXT = "!help / !command / !commands",
-    HELP_COMMAND_PRIMARY = "!help",
-    HELP_COMMAND_SECONDARY = "!commands",
-    HELP_COMMAND_TERTIARY = "!command",
+    HELP_COMMAND_DISPLAY_TEXT = "?help / ?command / ?commands",
+    HELP_COMMAND_PRIMARY = "?help",
+    HELP_COMMAND_SECONDARY = "?commands",
+    HELP_COMMAND_TERTIARY = "?command",
     HELP_COMMAND_AUTO_RESPONSE = "Shows the full command list.",
 
-    DEFAULT_RESPONSE_HELP_SUFFIX = " Type !help or !command anytime you need help.",
+    DEFAULT_RESPONSE_HELP_SUFFIX = " Type ?help or ?command anytime you need help.",
     HELP_HINT_CHECKBOX_LABEL = "Add Help Hint",
     COMMAND_LIST_CHECKBOX_LABEL = "Send Command List",
 
@@ -110,27 +110,27 @@ local DEFAULT_PRESET_TEMPLATE = {
     defaultResponse = "Hello, welcome to Weakauras Center.",
     commands = {
         {
-            command = "!discord",
+            command = "?discord",
             response = "You can join the discord by this link: https://discord.gg/Q9ZnDAR7F8"
         },
         {
-            command = "!free",
+            command = "?free",
             response = "Yes there are some free content, you can also share since its a public community, but most of the content is paid with in-game gold."
         },
         {
-            command = "!ownership",
+            command = "?ownership",
             response = "All content is created by me or other creators. Nothing is stolen or used without permission."
         },
         {
-            command = "!ui",
+            command = "?ui",
             response = "User Interfaces are complete screen setups built with multiple addons. The channel includes ElvUI, BlizzUI, and PvP UI configurations. No worries its easy to setup."
         },
         {
-            command = "!weakauras",
+            command = "?weakauras",
             response = "This channel includes WeakAuras for v4.0.0 and v5.19+, with setups for all classes and specs, raid helper WeakAuras, PvP WeakAuras, and plenty of extra utilities."
         },
         {
-            command = "!wtb",
+            command = "?wtb",
             response = "Please log discord and check all channels, then contact me >>HirohitoW<<. Discord Link: https://discord.gg/Q9ZnDAR7F8"
         }
     }
@@ -175,6 +175,26 @@ local function NormalizeCommandText(text)
     result = RemoveAllSpaces(result)
     result = TrimText(result)
     return result
+end
+
+local function NormalizeCommandForMatch(text)
+    local result = tostring(text or "")
+    result = string.lower(result)
+    result = RemoveAllSpaces(result)
+    result = TrimText(result)
+    result = string.gsub(result, "^[%?%!%.%-/]+", "")
+    return result
+end
+
+local function DoCommandsMatch(leftText, rightText)
+    local leftNormalized = NormalizeCommandForMatch(leftText)
+    local rightNormalized = NormalizeCommandForMatch(rightText)
+
+    if leftNormalized == "" or rightNormalized == "" then
+        return false
+    end
+
+    return leftNormalized == rightNormalized
 end
 
 local function IsReservedHelpAlias(text)
@@ -1684,7 +1704,7 @@ local function LoadSelectedCommandToDetailPanel()
         end
 
         if UI.commandDetailResponseEditBox then
-            UI.commandDetailResponseEditBox:SetText("This is a built-in command. Players can type !help, !command or !commands to receive the full command list.")
+            UI.commandDetailResponseEditBox:SetText("This is a built-in command. Players can type ?help, ?command or ?commands to receive the full command list.")
         end
     else
         if UI.commandDetailCommandEditBox then
@@ -2634,14 +2654,11 @@ local function GetMatchedResponseForWhisper(messageText)
         return nil, false
     end
 
-    local normalizedIncomingMessage = NormalizeCommandText(messageText)
-
     local index = 1
     while presetData.commands and presetData.commands[index] do
         local commandData = presetData.commands[index]
-        local normalizedCommand = NormalizeCommandText(commandData.command or "")
 
-        if normalizedCommand ~= "" and normalizedIncomingMessage == normalizedCommand then
+        if commandData and DoCommandsMatch(commandData.command or "", messageText) then
             local responseText = tostring(commandData.response or "")
             if responseText ~= "" then
                 return responseText, false
@@ -2659,16 +2676,18 @@ local function GetMatchedResponseForWhisper(messageText)
 end
 
 local function IsHelpCommand(messageText)
-    local normalizedIncomingMessage = NormalizeCommandText(messageText)
-    if normalizedIncomingMessage == NormalizeCommandText(CONST.HELP_COMMAND_PRIMARY) then
+    if DoCommandsMatch(messageText, CONST.HELP_COMMAND_PRIMARY) then
         return true
     end
-    if normalizedIncomingMessage == NormalizeCommandText(CONST.HELP_COMMAND_SECONDARY) then
+
+    if DoCommandsMatch(messageText, CONST.HELP_COMMAND_SECONDARY) then
         return true
     end
-    if normalizedIncomingMessage == NormalizeCommandText(CONST.HELP_COMMAND_TERTIARY) then
+
+    if DoCommandsMatch(messageText, CONST.HELP_COMMAND_TERTIARY) then
         return true
     end
+
     return false
 end
 
