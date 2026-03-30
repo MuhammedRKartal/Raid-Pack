@@ -65,6 +65,8 @@ local UI = {
     commandDetailStatusText = nil,
     commandBottomDropZone = nil,
 
+    helpHintCheckbox = nil,
+    sendCommandListCheckbox = nil,
     enableBtn = nil,
     closeBtn = nil,
 }
@@ -91,6 +93,8 @@ local CONST = {
     HELP_COMMAND_AUTO_RESPONSE = "Shows the full command list.",
 
     DEFAULT_RESPONSE_HELP_SUFFIX = " Type !help or !command anytime you need help.",
+    HELP_HINT_CHECKBOX_LABEL = "Add Help Hint",
+    COMMAND_LIST_CHECKBOX_LABEL = "Send Command List",
 
     PRESET_TRANSFER_EXPORT_TITLE = "Export Preset",
     PRESET_TRANSFER_IMPORT_TITLE = "Import Preset",
@@ -327,6 +331,27 @@ local function TrySkinButton(button)
     end
 end
 
+local function TrySkinCheckBox(checkBox)
+    if not checkBox or checkBox.isSkinned then
+        return
+    end
+
+    if not TryGetElvUISkinModule then
+        return
+    end
+
+    local eValue, sValue = TryGetElvUISkinModule()
+
+    if not eValue or not sValue then
+        return
+    end
+
+    if sValue.HandleCheckBox then
+        sValue:HandleCheckBox(checkBox)
+        checkBox.isSkinned = true
+    end
+end
+
 ------------------------------------------------------------
 -- PUBLIC STATUS HELPERS
 ------------------------------------------------------------
@@ -455,6 +480,18 @@ local function EnsureSavedVariables()
         RTAutoResponseSave.enabled = RTAutoResponseSave.enabled and true or false
     end
 
+    if RTAutoResponseSave.enableHelpHint == nil then
+        RTAutoResponseSave.enableHelpHint = true
+    else
+        RTAutoResponseSave.enableHelpHint = RTAutoResponseSave.enableHelpHint and true or false
+    end
+
+    if RTAutoResponseSave.sendCommandListAfterDefault == nil then
+        RTAutoResponseSave.sendCommandListAfterDefault = true
+    else
+        RTAutoResponseSave.sendCommandListAfterDefault = RTAutoResponseSave.sendCommandListAfterDefault and true or false
+    end
+
     if type(RTAutoResponseSave.presetOrderCounter) ~= "number" then
         RTAutoResponseSave.presetOrderCounter = 0
     end
@@ -492,6 +529,26 @@ local function EnsureSavedVariables()
         or RTAutoResponseSave.activePresetName == ""
         or not RTAutoResponseSave.presets[RTAutoResponseSave.activePresetName] then
         RTAutoResponseSave.activePresetName = RTAutoResponseSave.characterSettings[characterKey].activePresetName
+    end
+end
+
+local function IsHelpHintEnabled()
+    EnsureSavedVariables()
+    return RTAutoResponseSave.enableHelpHint ~= false
+end
+
+local function IsCommandListAfterDefaultEnabled()
+    EnsureSavedVariables()
+    return RTAutoResponseSave.sendCommandListAfterDefault ~= false
+end
+
+local function RefreshBottomOptionCheckboxes()
+    if UI.helpHintCheckbox and UI.helpHintCheckbox.SetChecked then
+        UI.helpHintCheckbox:SetChecked(IsHelpHintEnabled())
+    end
+
+    if UI.sendCommandListCheckbox and UI.sendCommandListCheckbox.SetChecked then
+        UI.sendCommandListCheckbox:SetChecked(IsCommandListAfterDefaultEnabled())
     end
 end
 
@@ -2793,11 +2850,19 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 
     if isDefaultResponse then
-        local firstMessage = LimitTextLength(tostring(responseText or "") .. CONST.DEFAULT_RESPONSE_HELP_SUFFIX, CONST.CHAT_MESSAGE_MAX_LENGTH)
+        local firstMessage = tostring(responseText or "")
+
+        if IsHelpHintEnabled() then
+            firstMessage = firstMessage .. CONST.DEFAULT_RESPONSE_HELP_SUFFIX
+        end
+
+        firstMessage = LimitTextLength(firstMessage, CONST.CHAT_MESSAGE_MAX_LENGTH)
         SendChatMessage(firstMessage, "WHISPER", nil, senderName)
 
-        local commandMessages = GetCommandListMessages()
-        SendWhisperMessageList(senderName, commandMessages)
+        if IsCommandListAfterDefaultEnabled() then
+            local commandMessages = GetCommandListMessages()
+            SendWhisperMessageList(senderName, commandMessages)
+        end
     else
         SendChatMessage(responseText, "WHISPER", nil, senderName)
     end
@@ -2817,6 +2882,7 @@ loader:SetScript("OnEvent", function(self, event, arg1)
         end
 
         STATE.isAutoResponseEnabled = RTAutoResponseSave.enabled and true or false
+        RefreshBottomOptionCheckboxes()
         RefreshAutoResponseOverlayIfAvailable()
         return
     end
@@ -3375,9 +3441,41 @@ local function CreatePresetTransferPopup(parentFrame)
 end
 
 local function BuildBottomButtons(f, onClose)
+    UI.helpHintCheckbox = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+    TrySkinCheckBox(UI.helpHintCheckbox)
+    UI.helpHintCheckbox:SetSize(24, 24)
+    UI.helpHintCheckbox:SetPoint("BOTTOMLEFT", 18, 12)
+    UI.helpHintCheckbox:SetChecked(true)
+    UI.helpHintCheckbox:SetScript("OnClick", function(self)
+        EnsureSavedVariables()
+        RTAutoResponseSave.enableHelpHint = self:GetChecked() and true or false
+    end)
+
+    local helpHintLabel = UI.helpHintCheckbox:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    helpHintLabel:SetPoint("LEFT", UI.helpHintCheckbox, "RIGHT", 4, 0)
+    helpHintLabel:SetJustifyH("LEFT")
+    helpHintLabel:SetText(CONST.HELP_HINT_CHECKBOX_LABEL)
+    UI.helpHintCheckbox.label = helpHintLabel
+
+    UI.sendCommandListCheckbox = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+    TrySkinCheckBox(UI.sendCommandListCheckbox)
+    UI.sendCommandListCheckbox:SetSize(24, 24)
+    UI.sendCommandListCheckbox:SetPoint("LEFT", UI.helpHintCheckbox.label, "RIGHT", 18, 0)
+    UI.sendCommandListCheckbox:SetChecked(true)
+    UI.sendCommandListCheckbox:SetScript("OnClick", function(self)
+        EnsureSavedVariables()
+        RTAutoResponseSave.sendCommandListAfterDefault = self:GetChecked() and true or false
+    end)
+
+    local sendCommandListLabel = UI.sendCommandListCheckbox:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    sendCommandListLabel:SetPoint("LEFT", UI.sendCommandListCheckbox, "RIGHT", 4, 0)
+    sendCommandListLabel:SetJustifyH("LEFT")
+    sendCommandListLabel:SetText(CONST.COMMAND_LIST_CHECKBOX_LABEL)
+    UI.sendCommandListCheckbox.label = sendCommandListLabel
+
     UI.enableBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
     UI.enableBtn:SetSize(170, 28)
-    UI.enableBtn:SetPoint("BOTTOMRIGHT", -18, 18)
+    UI.enableBtn:SetPoint("BOTTOMRIGHT", -18, 12)
     UI.enableBtn:SetText("Enable Auto Reply")
     UI.enableBtn:SetScript("OnClick", function()
         STATE.isAutoResponseEnabled = not STATE.isAutoResponseEnabled
@@ -3396,6 +3494,8 @@ local function BuildBottomButtons(f, onClose)
             onClose()
         end
     end)
+
+    RefreshBottomOptionCheckboxes()
 end
 
 local function SkinStaticButtons()
@@ -3412,6 +3512,8 @@ local function SkinStaticButtons()
     TrySkinButton(UI.presetTransferCancelBtn)
     TrySkinButton(UI.enableBtn)
     TrySkinButton(UI.closeBtn)
+    TrySkinCheckBox(UI.helpHintCheckbox)
+    TrySkinCheckBox(UI.sendCommandListCheckbox)
 end
 
 ------------------------------------------------------------
@@ -3452,6 +3554,7 @@ function CreateAutoResponseTabContent(parent, onClose)
         LoadPresetIntoUI(activePresetName, false)
         RefreshPresetActionButtons()
         RefreshEnableButton()
+        RefreshBottomOptionCheckboxes()
         RefreshDefaultResponseControlStates()
     end)
 
@@ -3462,6 +3565,7 @@ function CreateAutoResponseTabContent(parent, onClose)
 
     RefreshPresetActionButtons()
     RefreshEnableButton()
+    RefreshBottomOptionCheckboxes()
     RefreshAddCommandButtonState()
     StopRenameMode()
     RefreshDefaultResponseSaveButton()

@@ -1119,7 +1119,7 @@ end
 
 function TML.BUILDER.CreateWhisperSection(parentFrame, skinModule)
     local checkBox = CreateFrame("CheckButton", nil, parentFrame, "ChatConfigCheckButtonTemplate")
-    checkBox:SetSize(32, 32)
+    checkBox:SetSize(24, 24)
     checkBox:SetPoint("BOTTOMLEFT", 16, 10)
     TML.STYLE.SkinCheckBox(checkBox, skinModule)
 
