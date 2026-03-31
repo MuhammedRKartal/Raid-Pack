@@ -174,8 +174,8 @@ local function CopyPresetData(source)
     return result
 end
 
-local function BuildDefaultPresetData()
-    return {
+local function BuildDefaultPresetData(source)
+    local result = {
         message = CONST.DEFAULT_PRESET_MESSAGE,
         intervals = CopyIntervals(nil),
         enabledChannels = CopyEnabledChannels(nil),
@@ -183,6 +183,13 @@ local function BuildDefaultPresetData()
         isDefault = true,
         isReadOnly = true,
     }
+
+    if type(source) == "table" then
+        result.intervals = CopyIntervals(source.intervals)
+        result.enabledChannels = CopyEnabledChannels(source.enabledChannels)
+    end
+
+    return result
 end
 
 ------------------------------------------------------------
@@ -227,6 +234,16 @@ end
 
 local function NormalizePresets()
     local migratedPresets = {}
+    local existingDefaultPreset = nil
+
+    if type(RTSpammerSave.presets[CONST.DEFAULT_PRESET_NAME]) == "table" then
+        existingDefaultPreset = RTSpammerSave.presets[CONST.DEFAULT_PRESET_NAME]
+    elseif type(RTSpammerSave.current) == "table" then
+        existingDefaultPreset = {
+            intervals = RTSpammerSave.current.intervals,
+            enabledChannels = RTSpammerSave.current.enabledChannels,
+        }
+    end
 
     for presetName, presetData in pairs(RTSpammerSave.presets) do
         if type(presetName) == "string" and presetName ~= "" and presetName ~= CONST.DEFAULT_PRESET_NAME then
@@ -249,7 +266,7 @@ local function NormalizePresets()
         end
     end
 
-    migratedPresets[CONST.DEFAULT_PRESET_NAME] = BuildDefaultPresetData()
+    migratedPresets[CONST.DEFAULT_PRESET_NAME] = BuildDefaultPresetData(existingDefaultPreset)
     RTSpammerSave.presets = migratedPresets
     RTSpammerSave.current = nil
 end
@@ -411,6 +428,106 @@ local function GetMessageToSend()
 
     return presetData.message or ""
 end
+
+------------------------------------------------------------
+-- LINK HELPERS
+------------------------------------------------------------
+
+local isLinkHookInstalled = false
+local originalChatEdit_InsertLink = nil
+local lastActiveLinkTarget = nil
+
+local function ClearMessageBoxAsLinkTarget()
+    if lastActiveLinkTarget == UI.msgEditBox then
+        lastActiveLinkTarget = nil
+    end
+end
+
+local function SetMessageBoxAsLinkTarget()
+    local presetName = GetSelectedPresetName()
+
+    if not UI.msgEditBox or IsPresetReadOnly(presetName) then
+        lastActiveLinkTarget = nil
+        return
+    end
+
+    lastActiveLinkTarget = UI.msgEditBox
+end
+
+local function IsMessageBoxActive()
+    if not UI.msgEditBox then
+        return false
+    end
+
+    if not UI.msgEditBox:IsShown() then
+        return false
+    end
+
+    return lastActiveLinkTarget == UI.msgEditBox or UI.msgEditBox:HasFocus()
+end
+
+local function InsertLinkIntoMessageBox(link)
+    local presetName = GetSelectedPresetName()
+
+    if IsPresetReadOnly(presetName) or not link or link == "" then
+        return false
+    end
+
+    if not UI.msgEditBox or not UI.msgEditBox:IsShown() then
+        return false
+    end
+
+    if not IsMessageBoxActive() then
+        return false
+    end
+
+    local currentText = UI.msgEditBox:GetText() or ""
+    local currentLength = string.len(currentText)
+    local linkLength = string.len(link)
+    local maxLength = CONST.MAX_MESSAGE_LENGTH
+
+    if currentLength >= maxLength then
+        UI.msgEditBox:SetFocus()
+        return true
+    end
+
+    if currentLength + linkLength > maxLength then
+        UI.msgEditBox:SetFocus()
+        return true
+    end
+
+    UI.msgEditBox:SetFocus()
+    UI.msgEditBox:Insert(link)
+
+    SetMessageBoxAsLinkTarget()
+    UpdateCharacterCount()
+    UpdateMessageDirtyState()
+
+    return true
+end
+
+local function HookLinkInsertion()
+    if isLinkHookInstalled then
+        return
+    end
+
+    isLinkHookInstalled = true
+    originalChatEdit_InsertLink = ChatEdit_InsertLink
+
+    ChatEdit_InsertLink = function(link)
+        if InsertLinkIntoMessageBox(link) then
+            return true
+        end
+
+        if originalChatEdit_InsertLink then
+            return originalChatEdit_InsertLink(link)
+        end
+
+        return false
+    end
+end
+
+HookLinkInsertion()
 
 ------------------------------------------------------------
 -- UI HELPERS
@@ -913,7 +1030,31 @@ local function SaveActivePreset()
 end
 
 local function SaveSelectedPresetSettingsFromUI()
+    EnsureSavedVariables()
+
     local presetName = GetSelectedPresetName()
+    local presetData = GetPresetData(presetName)
+
+    if not presetData then
+        return
+    end
+
+    if IsDefaultPreset(presetName) then
+        local updatedPresetData = CopyPresetData(presetData)
+
+        for _, row in ipairs(UI.channelRows) do
+            updatedPresetData.intervals[row.config.name] = row.timer:GetText() or CONST.DEFAULT_INTERVALS[row.config.name]
+            updatedPresetData.enabledChannels[row.config.name] = row.check:GetChecked() and true or false
+        end
+
+        updatedPresetData.message = CONST.DEFAULT_PRESET_MESSAGE
+        updatedPresetData.order = -1
+        updatedPresetData.isDefault = true
+        updatedPresetData.isReadOnly = true
+
+        RTSpammerSave.presets[presetName] = updatedPresetData
+        return
+    end
 
     if not CanSavePreset(presetName) then
         return
@@ -1122,106 +1263,6 @@ local function RenameSelectedPreset(newName)
     SetSelectedPresetName(finalName)
     StopRenameMode()
 end
-
-------------------------------------------------------------
--- LINK HELPERS
-------------------------------------------------------------
-
-local isLinkHookInstalled = false
-local originalChatEdit_InsertLink = nil
-local lastActiveLinkTarget = nil
-
-local function SetMessageBoxAsLinkTarget()
-    local presetName = GetSelectedPresetName()
-
-    if not UI.msgEditBox or IsPresetReadOnly(presetName) then
-        lastActiveLinkTarget = nil
-        return
-    end
-
-    lastActiveLinkTarget = UI.msgEditBox
-end
-
-local function ClearMessageBoxAsLinkTarget()
-    if lastActiveLinkTarget == UI.msgEditBox then
-        lastActiveLinkTarget = nil
-    end
-end
-
-local function IsMessageBoxActive()
-    if not UI.msgEditBox then
-        return false
-    end
-
-    if not UI.msgEditBox:IsShown() then
-        return false
-    end
-
-    return lastActiveLinkTarget == UI.msgEditBox or UI.msgEditBox:HasFocus()
-end
-
-local function InsertLinkIntoMessageBox(link)
-    local presetName = GetSelectedPresetName()
-
-    if IsPresetReadOnly(presetName) or not link or link == "" then
-        return false
-    end
-
-    if not UI.msgEditBox or not UI.msgEditBox:IsShown() then
-        return false
-    end
-
-    if not IsMessageBoxActive() then
-        return false
-    end
-
-    local currentText = UI.msgEditBox:GetText() or ""
-    local currentLength = string.len(currentText)
-    local linkLength = string.len(link)
-    local maxLength = CONST.MAX_MESSAGE_LENGTH
-
-    if currentLength >= maxLength then
-        UI.msgEditBox:SetFocus()
-        return true
-    end
-
-    if currentLength + linkLength > maxLength then
-        UI.msgEditBox:SetFocus()
-        return true
-    end
-
-    UI.msgEditBox:SetFocus()
-    UI.msgEditBox:Insert(link)
-
-    SetMessageBoxAsLinkTarget()
-    UpdateCharacterCount()
-    UpdateMessageDirtyState()
-
-    return true
-end
-
-local function HookLinkInsertion()
-    if isLinkHookInstalled then
-        return
-    end
-
-    isLinkHookInstalled = true
-    originalChatEdit_InsertLink = ChatEdit_InsertLink
-
-    ChatEdit_InsertLink = function(link)
-        if InsertLinkIntoMessageBox(link) then
-            return true
-        end
-
-        if originalChatEdit_InsertLink then
-            return originalChatEdit_InsertLink(link)
-        end
-
-        return false
-    end
-end
-
-HookLinkInsertion()
 
 ------------------------------------------------------------
 -- UI BUILDERS
