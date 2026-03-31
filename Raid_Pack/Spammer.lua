@@ -49,7 +49,7 @@ local CONST = {
         ["General"] = true,
         ["Trade"] = true,
         ["World"] = true,
-        ["YELL"] = false,
+        ["YELL"] = true,
     },
     CHANNEL_POOL = {
         { name = "General", chatType = "CHANNEL" },
@@ -440,6 +440,7 @@ local function SetMessageEditBoxReadOnly(isReadOnly)
     end
 
     if isReadOnly then
+        ClearMessageBoxAsLinkTarget()
         UI.msgEditBox:ClearFocus()
         UI.msgEditBox:EnableMouse(false)
         if UI.msgEditBox.EnableKeyboard then
@@ -455,13 +456,20 @@ local function SetMessageEditBoxReadOnly(isReadOnly)
     end
 end
 
+local function GetRawMessageLength(text)
+    local safeText = tostring(text or "")
+    return string.len(safeText)
+end
+
 local function UpdateCharacterCount()
     if not UI.charCountText or not UI.msgEditBox then
         return
     end
 
-    local textLength = string.len(UI.msgEditBox:GetText() or "")
-    UI.charCountText:SetText(string.format("Characters: %d/%d", textLength, CONST.MAX_MESSAGE_LENGTH))
+    local messageText = UI.msgEditBox:GetText() or ""
+    local rawLength = GetRawMessageLength(messageText)
+
+    UI.charCountText:SetText(string.format("Chars: %d/%d", rawLength, CONST.MAX_MESSAGE_LENGTH))
 end
 
 local function UpdateMessageDirtyState()
@@ -1121,6 +1129,24 @@ end
 
 local isLinkHookInstalled = false
 local originalChatEdit_InsertLink = nil
+local lastActiveLinkTarget = nil
+
+local function SetMessageBoxAsLinkTarget()
+    local presetName = GetSelectedPresetName()
+
+    if not UI.msgEditBox or IsPresetReadOnly(presetName) then
+        lastActiveLinkTarget = nil
+        return
+    end
+
+    lastActiveLinkTarget = UI.msgEditBox
+end
+
+local function ClearMessageBoxAsLinkTarget()
+    if lastActiveLinkTarget == UI.msgEditBox then
+        lastActiveLinkTarget = nil
+    end
+end
 
 local function IsMessageBoxActive()
     if not UI.msgEditBox then
@@ -1131,24 +1157,43 @@ local function IsMessageBoxActive()
         return false
     end
 
-    return UI.msgEditBox:HasFocus()
+    return lastActiveLinkTarget == UI.msgEditBox or UI.msgEditBox:HasFocus()
 end
 
 local function InsertLinkIntoMessageBox(link)
     local presetName = GetSelectedPresetName()
 
-    if IsPresetReadOnly(presetName) or not IsMessageBoxActive() or not link or link == "" then
+    if IsPresetReadOnly(presetName) or not link or link == "" then
+        return false
+    end
+
+    if not UI.msgEditBox or not UI.msgEditBox:IsShown() then
+        return false
+    end
+
+    if not IsMessageBoxActive() then
         return false
     end
 
     local currentText = UI.msgEditBox:GetText() or ""
+    local currentLength = string.len(currentText)
+    local linkLength = string.len(link)
+    local maxLength = CONST.MAX_MESSAGE_LENGTH
 
-    if string.len(currentText) + string.len(link) > CONST.MAX_MESSAGE_LENGTH then
-        return false
+    if currentLength >= maxLength then
+        UI.msgEditBox:SetFocus()
+        return true
     end
 
-    UI.msgEditBox:Insert(link)
+    if currentLength + linkLength > maxLength then
+        UI.msgEditBox:SetFocus()
+        return true
+    end
+
     UI.msgEditBox:SetFocus()
+    UI.msgEditBox:Insert(link)
+
+    SetMessageBoxAsLinkTarget()
     UpdateCharacterCount()
     UpdateMessageDirtyState()
 
@@ -1351,14 +1396,30 @@ function CreateSpammerTabContent(parent, onClose)
     UI.msgEditBox:SetPoint("TOPLEFT", 8, -8)
     UI.msgEditBox:SetPoint("BOTTOMRIGHT", -8, 8)
     UI.msgEditBox:SetAutoFocus(false)
+    UI.msgEditBox:EnableMouse(true)
+    if UI.msgEditBox.SetHyperlinksEnabled then
+        UI.msgEditBox:SetHyperlinksEnabled(false)
+    end
 
-    UI.msgEditBox:SetScript("OnTextChanged", function()
+    UI.msgEditBox:SetScript("OnTextChanged", function(self)
+        local text = self:GetText() or ""
+
+        if string.len(text) > CONST.MAX_MESSAGE_LENGTH then
+            self:SetText(string.sub(text, 1, CONST.MAX_MESSAGE_LENGTH))
+            self:SetCursorPosition(CONST.MAX_MESSAGE_LENGTH)
+        end
+
+        SetMessageBoxAsLinkTarget()
         UpdateCharacterCount()
         UpdateMessageDirtyState()
         RefreshPresetActionButtons()
     end)
 
     UI.msgEditBox:SetScript("OnEscapePressed", function(self)
+        ClearMessageBoxAsLinkTarget()
+        if ChatEdit_DeactivateChat then
+            ChatEdit_DeactivateChat(self)
+        end
         self:ClearFocus()
     end)
 
@@ -1366,22 +1427,37 @@ function CreateSpammerTabContent(parent, onClose)
         local presetName = GetSelectedPresetName()
 
         if IsPresetReadOnly(presetName) then
+            ClearMessageBoxAsLinkTarget()
             self:ClearFocus()
             return
         end
 
+        SetMessageBoxAsLinkTarget()
         self:SetFocus()
+
+        if ChatEdit_ActivateChat then
+            ChatEdit_ActivateChat(self)
+        end
     end)
 
     UI.msgEditBox:SetScript("OnEditFocusGained", function(self)
         local presetName = GetSelectedPresetName()
 
         if IsPresetReadOnly(presetName) then
+            ClearMessageBoxAsLinkTarget()
             self:ClearFocus()
             return
         end
 
-        self:SetFocus()
+        SetMessageBoxAsLinkTarget()
+
+        if ChatEdit_ActivateChat then
+            ChatEdit_ActivateChat(self)
+        end
+    end)
+
+    UI.msgEditBox:SetScript("OnHide", function()
+        ClearMessageBoxAsLinkTarget()
     end)
 
     UI.charCountText = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
