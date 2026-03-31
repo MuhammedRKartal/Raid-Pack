@@ -40,10 +40,10 @@ local CONST = {
     MAX_MESSAGE_LENGTH = 255,
     UI_UPDATE_INTERVAL = 0.1,
     DEFAULT_INTERVALS = {
-        ["General"] = "23",
-        ["Trade"] = "17",
+        ["General"] = "31",
+        ["Trade"] = "23",
         ["World"] = "61",
-        ["YELL"] = "37",
+        ["YELL"] = "41",
     },
     DEFAULT_ENABLED_CHANNELS = {
         ["General"] = true,
