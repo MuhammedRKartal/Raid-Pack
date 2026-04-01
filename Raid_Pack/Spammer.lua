@@ -1458,9 +1458,6 @@ function CreateSpammerTabContent(parent, onClose)
 
     UI.msgEditBox:SetScript("OnEscapePressed", function(self)
         ClearMessageBoxAsLinkTarget()
-        if ChatEdit_DeactivateChat then
-            ChatEdit_DeactivateChat(self)
-        end
         self:ClearFocus()
     end)
 
@@ -1475,10 +1472,6 @@ function CreateSpammerTabContent(parent, onClose)
 
         SetMessageBoxAsLinkTarget()
         self:SetFocus()
-
-        if ChatEdit_ActivateChat then
-            ChatEdit_ActivateChat(self)
-        end
     end)
 
     UI.msgEditBox:SetScript("OnEditFocusGained", function(self)
@@ -1491,10 +1484,10 @@ function CreateSpammerTabContent(parent, onClose)
         end
 
         SetMessageBoxAsLinkTarget()
+    end)
 
-        if ChatEdit_ActivateChat then
-            ChatEdit_ActivateChat(self)
-        end
+    UI.msgEditBox:SetScript("OnEditFocusLost", function()
+        ClearMessageBoxAsLinkTarget()
     end)
 
     UI.msgEditBox:SetScript("OnHide", function()
