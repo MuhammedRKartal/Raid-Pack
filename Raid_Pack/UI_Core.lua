@@ -37,6 +37,10 @@ local TAB_DEFINITIONS = {
         name = "Roll Manager",
         creator = CreateRollManagerTabContent
     },
+    {
+        name = "Extra Tools",
+        creator = addonTable.CreateExtraToolsContent
+    }
 }
 
 local function EnsureStatusOverlaySavedVariables()

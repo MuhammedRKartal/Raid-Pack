@@ -3,18 +3,25 @@
 ## Notes: Spammer and Master Looter addons in one pack.
 ## Author: HirohitoW
 ## Version: 1.0.0
-## SavedVariables: RTAutoResponseSave, RTSpammerSave
+## SavedVariables: RTAutoResponseSave, RTSpammerSave, RTFishSpammerDetectorDB
 ## SavedVariablesPerCharacter: RTMasterLooterSave, RTStatusOverlaySave, RTRollManagerSave
 
 Libs\LibStub\LibStub.lua
 Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
 Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
 Libs\LibDBIcon-1.0\lib.xml
+
 ElvUI_migration.lua
+
 Roll_Manager.lua
 Master_Looter.lua
 Spammer.lua
 Auto_Response.lua
-Toc_Assignments.lua
+
+Extra_Tools\Fish_Spammer_Detector.lua
+Extra_Tools\Assignments.lua
+Extra_Tools\Paladin_Buffs.lua
+Extra_Tools_Core.lua
+
 Minimap_Settings.lua
 UI_Core.lua
