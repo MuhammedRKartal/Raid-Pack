@@ -66,6 +66,8 @@ local eventFrame = CreateFrame("Frame")
 local loader = CreateFrame("Frame")
 
 local GetSelectedPresetName
+local UpdateCharacterCount
+local UpdateMessageDirtyState
 
 ------------------------------------------------------------
 -- PUBLIC STATUS HELPERS
@@ -436,6 +438,7 @@ end
 local isLinkHookInstalled = false
 local originalChatEdit_InsertLink = nil
 local lastActiveLinkTarget = nil
+local achievementHooksInstalled = false
 
 local function ClearMessageBoxAsLinkTarget()
     if lastActiveLinkTarget == UI.msgEditBox then
@@ -455,6 +458,8 @@ local function SetMessageBoxAsLinkTarget()
 end
 
 local function IsMessageBoxActive()
+    local presetName = GetSelectedPresetName()
+
     if not UI.msgEditBox then
         return false
     end
@@ -463,17 +468,89 @@ local function IsMessageBoxActive()
         return false
     end
 
-    return lastActiveLinkTarget == UI.msgEditBox or UI.msgEditBox:HasFocus()
-end
-
-local function InsertLinkIntoMessageBox(link)
-    local presetName = GetSelectedPresetName()
-
-    if IsPresetReadOnly(presetName) or not link or link == "" then
+    if IsPresetReadOnly(presetName) then
         return false
     end
 
-    if not UI.msgEditBox or not UI.msgEditBox:IsShown() then
+    return true
+end
+
+local function CanAppendTextToMessageBox(textToAppend)
+    local currentText = ""
+    local appendText = tostring(textToAppend or "")
+    local maxLength = CONST.MAX_MESSAGE_LENGTH
+
+    if not UI.msgEditBox then
+        return false
+    end
+
+    currentText = UI.msgEditBox:GetText() or ""
+
+    if string.len(currentText) >= maxLength then
+        return false
+    end
+
+    if string.len(currentText) + string.len(appendText) > maxLength then
+        return false
+    end
+
+    return true
+end
+
+local function InsertTextIntoMessageBox(textToInsert)
+    if not IsMessageBoxActive() then
+        return false
+    end
+
+    if not textToInsert or textToInsert == "" then
+        return false
+    end
+
+    if not CanAppendTextToMessageBox(textToInsert) then
+        if UI.msgEditBox then
+            UI.msgEditBox:SetFocus()
+            SetMessageBoxAsLinkTarget()
+        end
+        return true
+    end
+
+    UI.msgEditBox:SetFocus()
+    UI.msgEditBox:Insert(textToInsert)
+    SetMessageBoxAsLinkTarget()
+    UpdateCharacterCount()
+    UpdateMessageDirtyState()
+
+    return true
+end
+
+local function InsertLinkIntoMessageBox(link)
+    return InsertTextIntoMessageBox(link)
+end
+
+local function TryInsertAchievementLinkById(achievementId)
+    local achievementLink = nil
+
+    if not achievementId then
+        return false
+    end
+
+    achievementLink = GetAchievementLink(achievementId)
+
+    if not achievementLink or achievementLink == "" then
+        return false
+    end
+
+    return InsertLinkIntoMessageBox(achievementLink)
+end
+
+local function TryInsertAchievementFromButton(button)
+    local achievementId = nil
+
+    if not button then
+        return false
+    end
+
+    if not IsShiftKeyDown() then
         return false
     end
 
@@ -481,29 +558,81 @@ local function InsertLinkIntoMessageBox(link)
         return false
     end
 
-    local currentText = UI.msgEditBox:GetText() or ""
-    local currentLength = string.len(currentText)
-    local linkLength = string.len(link)
-    local maxLength = CONST.MAX_MESSAGE_LENGTH
-
-    if currentLength >= maxLength then
-        UI.msgEditBox:SetFocus()
-        return true
+    if button.id then
+        achievementId = button.id
     end
 
-    if currentLength + linkLength > maxLength then
-        UI.msgEditBox:SetFocus()
-        return true
+    if not achievementId and button.GetID then
+        achievementId = button:GetID()
     end
 
-    UI.msgEditBox:SetFocus()
-    UI.msgEditBox:Insert(link)
+    if not achievementId and button.achievement and button.achievement.id then
+        achievementId = button.achievement.id
+    end
 
-    SetMessageBoxAsLinkTarget()
-    UpdateCharacterCount()
-    UpdateMessageDirtyState()
+    return TryInsertAchievementLinkById(achievementId)
+end
 
-    return true
+local function HookAchievementButton(button)
+    local originalOnClick = nil
+
+    if not button or button.RTSpammerAchievementHooked then
+        return
+    end
+
+    originalOnClick = button:GetScript("OnClick")
+
+    button:SetScript("OnClick", function(self, mouseButton, ...)
+        if mouseButton == "LeftButton" and IsShiftKeyDown() and TryInsertAchievementFromButton(self) then
+            return
+        end
+
+        if originalOnClick then
+            originalOnClick(self, mouseButton, ...)
+        end
+    end)
+
+    button.RTSpammerAchievementHooked = true
+end
+
+local function HookVisibleAchievementButtons()
+    local index = 1
+
+    while true do
+        local button = _G["AchievementFrameAchievementsContainerButton" .. tostring(index)]
+
+        if not button then
+            break
+        end
+
+        HookAchievementButton(button)
+        index = index + 1
+    end
+end
+
+local function HookAchievementFrames()
+    if achievementHooksInstalled then
+        return
+    end
+
+    achievementHooksInstalled = true
+
+    if AchievementFrameAchievementsContainer then
+        AchievementFrameAchievementsContainer:HookScript("OnShow", function()
+            HookVisibleAchievementButtons()
+        end)
+    end
+
+    if AchievementFrame then
+        AchievementFrame:HookScript("OnShow", function()
+            HookVisibleAchievementButtons()
+        end)
+    end
+
+    local achievementWatcherFrame = CreateFrame("Frame")
+    achievementWatcherFrame:SetScript("OnUpdate", function()
+        HookVisibleAchievementButtons()
+    end)
 end
 
 local function HookLinkInsertion()
@@ -525,6 +654,8 @@ local function HookLinkInsertion()
 
         return false
     end
+
+    HookAchievementFrames()
 end
 
 HookLinkInsertion()
@@ -578,7 +709,7 @@ local function GetRawMessageLength(text)
     return string.len(safeText)
 end
 
-local function UpdateCharacterCount()
+UpdateCharacterCount = function()
     if not UI.charCountText or not UI.msgEditBox then
         return
     end
@@ -589,7 +720,7 @@ local function UpdateCharacterCount()
     UI.charCountText:SetText(string.format("Chars: %d/%d", rawLength, CONST.MAX_MESSAGE_LENGTH))
 end
 
-local function UpdateMessageDirtyState()
+UpdateMessageDirtyState = function()
     if not UI.msgLabel then
         return
     end
