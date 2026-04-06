@@ -1,23 +1,30 @@
 -- Minimap_Settings.lua
 local addonName, addonTable = ...
 
-local MINIMAP_BUTTON_NAME = "RaidToolsMinimapButton"
-local MAIN_FRAME_NAME = "RTMainFrame"
-local BUTTON_SIZE = 16
-local BUTTON_ICON = "Interface\\Icons\\Spell_Holy_ChampionsBond"
-local BUTTON_BORDER = "Interface\\Minimap\\MiniMap-TrackingBorder"
+local BUTTON_ICON = "Interface\\Icons\\INV_Scroll_04"
+local LDB_OBJECT_NAME = "RaidTools"
+local minimapDataObject = nil
+local minimapIconLibrary = nil
 
-local minimapButton = nil
+local function EnsureMinimapSettings()
+    if not RTRollManagerSave then
+        RTRollManagerSave = {}
+    end
 
-local function OnMinimapButtonDragStart(self)
-    self:StartMoving()
+    if not RTRollManagerSave.minimap then
+        RTRollManagerSave.minimap = {}
+    end
+
+    if RTRollManagerSave.minimap.hide == nil then
+        RTRollManagerSave.minimap.hide = false
+    end
+
+    if RTRollManagerSave.minimap.minimapPos == nil then
+        RTRollManagerSave.minimap.minimapPos = 220
+    end
 end
 
-local function OnMinimapButtonDragStop(self)
-    self:StopMovingOrSizing()
-end
-
-local function OnMinimapButtonClick(self, button)
+local function OnMinimapClick(frame, button)
     if button == "LeftButton" then
         if ToggleMainUI then
             ToggleMainUI()
@@ -32,56 +39,74 @@ local function OnMinimapButtonClick(self, button)
     end
 end
 
-local function OnMinimapButtonEnter(self)
-    GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-    GameTooltip:AddLine("Raid Tools", 1, 0.82, 0)
-    GameTooltip:AddLine("by HirohitoW", 0.7, 0.7, 0.7)
-    GameTooltip:AddLine(" ")
-    GameTooltip:AddLine("Left Click:", 0, 1, 0)
-    GameTooltip:AddLine("  Open / Close Addon UI", 1, 1, 1)
-    GameTooltip:AddLine("Right Click:", 0, 1, 0)
-    GameTooltip:AddLine("  Toggle Status Overlay", 1, 1, 1)
-    GameTooltip:Show()
+local function OnMinimapTooltipShow(tooltip)
+    tooltip:AddLine("Raid Tools", 1, 0.82, 0)
+    tooltip:AddLine("by HirohitoW", 0.7, 0.7, 0.7)
+    tooltip:AddLine(" ")
+    tooltip:AddLine("Left Click:", 0, 1, 0)
+    tooltip:AddLine("  Open / Close Addon UI", 1, 1, 1)
+    tooltip:AddLine("Right Click:", 0, 1, 0)
+    tooltip:AddLine("  Toggle Status Overlay", 1, 1, 1)
 end
 
-local function OnMinimapButtonLeave()
-    GameTooltip:Hide()
+local function CreateMinimapDataObject()
+    local ldbLibrary = LibStub("LibDataBroker-1.1")
+
+    minimapDataObject = ldbLibrary:NewDataObject(LDB_OBJECT_NAME, {
+        type = "data source",
+        text = "Raid Tools",
+        icon = BUTTON_ICON,
+        OnClick = OnMinimapClick,
+        OnTooltipShow = OnMinimapTooltipShow,
+    })
 end
 
-local function CreateMinimapButtonTextures(button)
-    button.icon = button:CreateTexture(nil, "ARTWORK")
-    button.icon:SetAllPoints()
-    button.icon:SetTexture(BUTTON_ICON)
-
-    button.border = button:CreateTexture(nil, "OVERLAY")
-    button.border:SetAllPoints()
-    button.border:SetTexture(BUTTON_BORDER)
-end
-
-local function SetupMinimapButtonBehavior(button)
-    button:SetMovable(true)
-    button:EnableMouse(true)
-    button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-    button:RegisterForDrag("LeftButton")
-
-    button:SetScript("OnDragStart", OnMinimapButtonDragStart)
-    button:SetScript("OnDragStop", OnMinimapButtonDragStop)
-    button:SetScript("OnClick", OnMinimapButtonClick)
-    button:SetScript("OnEnter", OnMinimapButtonEnter)
-    button:SetScript("OnLeave", OnMinimapButtonLeave)
+local function RegisterMinimapIcon()
+    minimapIconLibrary = LibStub("LibDBIcon-1.0")
+    minimapIconLibrary:Register(LDB_OBJECT_NAME, minimapDataObject, RTRollManagerSave.minimap)
 end
 
 function CreateMinimapButtonIfNeeded()
-    if minimapButton then
+    if minimapDataObject then
         return
     end
 
-    minimapButton = CreateFrame("Button", MINIMAP_BUTTON_NAME, Minimap)
-    minimapButton:SetSize(BUTTON_SIZE, BUTTON_SIZE)
-    minimapButton:SetFrameStrata("MEDIUM")
-    minimapButton:SetFrameLevel(8)
-    minimapButton:SetPoint("TOPLEFT", Minimap, "TOPLEFT", -2, -2)
+    EnsureMinimapSettings()
+    CreateMinimapDataObject()
+    RegisterMinimapIcon()
+end
 
-    CreateMinimapButtonTextures(minimapButton)
-    SetupMinimapButtonBehavior(minimapButton)
+function ShowMinimapButton()
+    EnsureMinimapSettings()
+
+    if not minimapDataObject then
+        CreateMinimapButtonIfNeeded()
+        return
+    end
+
+    RTRollManagerSave.minimap.hide = false
+    minimapIconLibrary:Show(LDB_OBJECT_NAME)
+    minimapIconLibrary:Refresh(LDB_OBJECT_NAME, RTRollManagerSave.minimap)
+end
+
+function HideMinimapButton()
+    EnsureMinimapSettings()
+
+    if not minimapDataObject then
+        CreateMinimapButtonIfNeeded()
+    end
+
+    RTRollManagerSave.minimap.hide = true
+    minimapIconLibrary:Hide(LDB_OBJECT_NAME)
+end
+
+function ToggleMinimapButton()
+    EnsureMinimapSettings()
+
+    if RTRollManagerSave.minimap.hide then
+        ShowMinimapButton()
+        return
+    end
+
+    HideMinimapButton()
 end

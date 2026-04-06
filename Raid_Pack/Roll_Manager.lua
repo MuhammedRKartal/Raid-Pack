@@ -64,6 +64,8 @@ local UI_CONSTANTS = {
     HEADER_RIGHT_OFFSET = 20
 }
 
+local HELPER = {}
+
 local defaultSettings = {
     countdownDuration = 20,
     useRaidWarning = true,
@@ -181,6 +183,10 @@ local function CopyDefaultSettings()
     return CopyTable(defaultSettings)
 end
 
+function HELPER.IsInRaidGroup()
+    return UnitInRaid("player") ~= nil
+end
+
 function RT_IsRollManagerEnabled()
     return true
 end
@@ -258,7 +264,7 @@ local function GetAnnouncementChannel()
         return GetRaidChatType()
     end
 
-    if IsInRaid() then
+    if HELPER.IsInRaidGroup() then
         return "RAID"
     end
 
@@ -352,7 +358,7 @@ local function GetUnitByName(nameValue)
         return "player"
     end
 
-    if IsInRaid() then
+    if HELPER.IsInRaidGroup() then
         local raidSize = GetNumRaidMembers()
         local index = 1
 
@@ -380,7 +386,7 @@ local function GetUnitByName(nameValue)
 end
 
 local function ClearAllWinnerMarks()
-    if IsInRaid() then
+    if HELPER.IsInRaidGroup() then
         local raidSize = GetNumRaidMembers()
         local index = 1
 

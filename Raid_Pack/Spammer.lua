@@ -527,112 +527,24 @@ local function InsertLinkIntoMessageBox(link)
     return InsertTextIntoMessageBox(link)
 end
 
-local function TryInsertAchievementLinkById(achievementId)
-    local achievementLink = nil
-
-    if not achievementId then
+local function IsAddonEditBoxFocused()
+    if not UI.msgEditBox then
         return false
     end
 
-    achievementLink = GetAchievementLink(achievementId)
-
-    if not achievementLink or achievementLink == "" then
+    if not UI.msgEditBox:IsShown() then
         return false
     end
 
-    return InsertLinkIntoMessageBox(achievementLink)
+    if UI.msgEditBox.HasFocus and UI.msgEditBox:HasFocus() then
+        return true
+    end
+
+    return false
 end
 
-local function TryInsertAchievementFromButton(button)
-    local achievementId = nil
-
-    if not button then
-        return false
-    end
-
-    if not IsShiftKeyDown() then
-        return false
-    end
-
-    if not IsMessageBoxActive() then
-        return false
-    end
-
-    if button.id then
-        achievementId = button.id
-    end
-
-    if not achievementId and button.GetID then
-        achievementId = button:GetID()
-    end
-
-    if not achievementId and button.achievement and button.achievement.id then
-        achievementId = button.achievement.id
-    end
-
-    return TryInsertAchievementLinkById(achievementId)
-end
-
-local function HookAchievementButton(button)
-    local originalOnClick = nil
-
-    if not button or button.RTSpammerAchievementHooked then
-        return
-    end
-
-    originalOnClick = button:GetScript("OnClick")
-
-    button:SetScript("OnClick", function(self, mouseButton, ...)
-        if mouseButton == "LeftButton" and IsShiftKeyDown() and TryInsertAchievementFromButton(self) then
-            return
-        end
-
-        if originalOnClick then
-            originalOnClick(self, mouseButton, ...)
-        end
-    end)
-
-    button.RTSpammerAchievementHooked = true
-end
-
-local function HookVisibleAchievementButtons()
-    local index = 1
-
-    while true do
-        local button = _G["AchievementFrameAchievementsContainerButton" .. tostring(index)]
-
-        if not button then
-            break
-        end
-
-        HookAchievementButton(button)
-        index = index + 1
-    end
-end
-
-local function HookAchievementFrames()
-    if achievementHooksInstalled then
-        return
-    end
-
-    achievementHooksInstalled = true
-
-    if AchievementFrameAchievementsContainer then
-        AchievementFrameAchievementsContainer:HookScript("OnShow", function()
-            HookVisibleAchievementButtons()
-        end)
-    end
-
-    if AchievementFrame then
-        AchievementFrame:HookScript("OnShow", function()
-            HookVisibleAchievementButtons()
-        end)
-    end
-
-    local achievementWatcherFrame = CreateFrame("Frame")
-    achievementWatcherFrame:SetScript("OnUpdate", function()
-        HookVisibleAchievementButtons()
-    end)
+local function IsBlizzardChatFocused()
+    return ChatEdit_GetActiveWindow() ~= nil
 end
 
 local function HookLinkInsertion()
@@ -644,8 +556,18 @@ local function HookLinkInsertion()
     originalChatEdit_InsertLink = ChatEdit_InsertLink
 
     ChatEdit_InsertLink = function(link)
-        if InsertLinkIntoMessageBox(link) then
-            return true
+        if IsAddonEditBoxFocused() then
+            local handled = InsertLinkIntoMessageBox(link)
+            if handled then
+                return true
+            end
+        end
+
+        if IsBlizzardChatFocused() then
+            if originalChatEdit_InsertLink then
+                return originalChatEdit_InsertLink(link)
+            end
+            return false
         end
 
         if originalChatEdit_InsertLink then
@@ -654,8 +576,6 @@ local function HookLinkInsertion()
 
         return false
     end
-
-    HookAchievementFrames()
 end
 
 HookLinkInsertion()

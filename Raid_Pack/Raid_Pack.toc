@@ -6,10 +6,15 @@
 ## SavedVariables: RTAutoResponseSave, RTSpammerSave
 ## SavedVariablesPerCharacter: RTMasterLooterSave, RTStatusOverlaySave, RTRollManagerSave
 
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
+Libs\LibDBIcon-1.0\lib.xml
 ElvUI_migration.lua
 Roll_Manager.lua
 Master_Looter.lua
 Spammer.lua
 Auto_Response.lua
+Toc_Assignments.lua
 Minimap_Settings.lua
 UI_Core.lua

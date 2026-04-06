@@ -31,7 +31,7 @@ local TAB_DEFINITIONS = {
     },
     {
         name = "Master Looter",
-        creator = CreateMasterLooterTabContent
+        creator = addonTable.CreateMasterLooterTabContent
     },
     {
         name = "Roll Manager",

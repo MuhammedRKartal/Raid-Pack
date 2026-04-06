@@ -1,105 +1,51 @@
 local addonName, addonTable = ...
 
-local TML = {}
-
-------------------------------------------------------------
--- MODULE TABLES
-------------------------------------------------------------
-
-TML.DB = {}
-TML.HELPER = {}
-TML.ITEM = {}
-TML.LOG = {}
-TML.WHISPER = {}
-TML.LOGIC = {}
-TML.STYLE = {}
-TML.BUILDER = {}
-TML.EVENTS = {}
-TML.API = {}
-
-------------------------------------------------------------
--- TML.STATE / TML.UI REFS / CONSTANTS
-------------------------------------------------------------
-
-TML.STATE = {
+local STATE = {
     isEnabled = false,
     statusElapsed = 0,
 }
 
-TML.UI = {
+local UI = {
     root = nil,
-
     logSection = nil,
-
     bopPanel = nil,
     boePanel = nil,
-
     bopTitle = nil,
     boeTitle = nil,
-
     bopCounter = nil,
     boeCounter = nil,
-
     bopClearButton = nil,
     boeClearButton = nil,
-
     bopScroll = nil,
     boeScroll = nil,
-
     statusPanel = nil,
     statusText = nil,
     raidLeaderText = nil,
     makeMLButton = nil,
-
     collectorPanel = nil,
     collectorInputs = {},
-
     whisperCheckBox = nil,
     whisperLabel = nil,
-
     toggleButton = nil,
     closeButton = nil,
 }
 
-TML.REFRESH = {
-    log = nil,
-    status = nil,
-    controls = nil,
-}
-
-TML.TOOLTIP = CreateFrame("GameTooltip", "TMLMasterLooterScanTooltip", nil, "GameTooltipTemplate")
-TML.TOOLTIP:SetOwner(UIParent, "ANCHOR_NONE")
-
-TML.EVENT_FRAME = CreateFrame("Frame")
-TML.LOADER_FRAME = CreateFrame("Frame")
-
-TML.CONST = {
+local CONST = {
     MAX_LOG_ENTRIES = 1000,
-
     OUTER_LEFT = 20,
     OUTER_RIGHT = 20,
     TOP_OFFSET = -34,
-
     LOG_SECTION_HEIGHT = 210,
     LOG_GAP = 10,
-    PANEL_INSET = 8,
-
     SECTION_GAP = 40,
-
     STATUS_HEIGHT = 110,
     STATUS_INNER_TOP_PADDING = 20,
-
     COLLECTOR_HEIGHT = 110,
     COLLECTOR_TITLE_GAP = 10,
-
-    ROW_HEIGHT = 30,
     LABEL_WIDTH = 90,
     INPUT_WIDTH = 150,
     TARGET_WIDTH = 58,
     SELF_WIDTH = 48,
-
-    FOOTER_HEIGHT = 40,
-
     QUALITY_NAMES = {
         [0] = "Poor",
         [1] = "Common",
@@ -110,11 +56,13 @@ TML.CONST = {
     },
 }
 
-------------------------------------------------------------
--- DEFAULT DATA
-------------------------------------------------------------
+local scanTooltip = CreateFrame("GameTooltip", "RTMasterLooterScanTooltip", nil, "GameTooltipTemplate")
+scanTooltip:SetOwner(UIParent, "ANCHOR_NONE")
 
-function TML.DB.CreateEmptyStats()
+local eventFrame = CreateFrame("Frame")
+local loaderFrame = CreateFrame("Frame")
+
+local function createEmptyStats()
     return {
         epic = 0,
         rare = 0,
@@ -125,7 +73,7 @@ function TML.DB.CreateEmptyStats()
     }
 end
 
-function TML.DB.BuildDefaultSettings()
+local function buildDefaultSettings()
     return {
         lootCollector = UnitName("player"),
         shardsCollector = UnitName("player"),
@@ -134,24 +82,12 @@ function TML.DB.BuildDefaultSettings()
         minQuality = 1,
         lootLog = {},
         whisperEnabled = true,
-        stats = TML.DB.CreateEmptyStats(),
+        stats = createEmptyStats(),
     }
 end
 
-------------------------------------------------------------
--- PUBLIC STATUS HELPERS
-------------------------------------------------------------
-
-function TML_IsMasterLooterEnabled()
-    return TML.STATE.isEnabled
-end
-
-------------------------------------------------------------
--- SAVED VARIABLE HELPERS
-------------------------------------------------------------
-
-function TML.DB.EnsureSavedVariables()
-    local defaultSettings = TML.DB.BuildDefaultSettings()
+local function ensureSavedVariables()
+    local defaultSettings = buildDefaultSettings()
 
     if type(RTMasterLooterSave) ~= "table" then
         RTMasterLooterSave = CopyTable(defaultSettings)
@@ -162,7 +98,7 @@ function TML.DB.EnsureSavedVariables()
     end
 
     if type(RTMasterLooterSave.stats) ~= "table" then
-        RTMasterLooterSave.stats = TML.DB.CreateEmptyStats()
+        RTMasterLooterSave.stats = createEmptyStats()
     end
 
     if RTMasterLooterSave.stats.shards == nil then
@@ -210,20 +146,20 @@ function TML.DB.EnsureSavedVariables()
     end
 end
 
-------------------------------------------------------------
--- GENERAL HELPERS
-------------------------------------------------------------
-
-function TML.HELPER.GetPlayerName()
+local function getPlayerName()
     return UnitName("player")
 end
 
-function TML.HELPER.IsInRaidGroup()
-    return IsInRaid() == true
+local function isInRaidGroup()
+    if IsInRaid then
+        return IsInRaid()
+    end
+
+    return UnitInRaid("player") ~= nil
 end
 
-function TML.HELPER.IsPlayerRaidLeader()
-    if not IsInRaid() then
+local function isPlayerRaidLeader()
+    if not isInRaidGroup() then
         return false
     end
 
@@ -240,8 +176,8 @@ function TML.HELPER.IsPlayerRaidLeader()
     return false
 end
 
-function TML.HELPER.IsPlayerLeaderOrAssistant()
-    if not IsInRaid() then
+local function isPlayerLeaderOrAssistant()
+    if not isInRaidGroup() then
         return false
     end
 
@@ -258,8 +194,8 @@ function TML.HELPER.IsPlayerLeaderOrAssistant()
     return false
 end
 
-function TML.HELPER.IsPlayerMasterLooter()
-    if not TML.HELPER.IsInRaidGroup() then
+local function isPlayerMasterLooter()
+    if not isInRaidGroup() then
         return false
     end
 
@@ -272,7 +208,7 @@ function TML.HELPER.IsPlayerMasterLooter()
     return masterLooterPartyID == 0 or masterLooterRaidID == 0
 end
 
-function TML.HELPER.BuildMasterLootCandidateMap()
+local function buildMasterLootCandidateMap()
     local candidateMap = {}
 
     for index = 1, 40 do
@@ -285,60 +221,56 @@ function TML.HELPER.BuildMasterLootCandidateMap()
     return candidateMap
 end
 
-function TML.HELPER.GetSkinModule()
+local function getSkinModule()
     if TryGetElvUISkinModule then
-        local engine, skin = TryGetElvUISkinModule()
-        return engine, skin
+        local _, skinModule = TryGetElvUISkinModule()
+        return skinModule
     end
 
-    return nil, nil
+    return nil
 end
 
-------------------------------------------------------------
--- ITEM HELPERS
-------------------------------------------------------------
-
-function TML.ITEM.IsItemBOE(itemLink)
+local function isItemBOE(itemLink)
     if not itemLink or itemLink == "" then
         return false
     end
 
-    TML.TOOLTIP:ClearLines()
-    TML.TOOLTIP:SetOwner(UIParent, "ANCHOR_NONE")
-    TML.TOOLTIP:SetHyperlink(itemLink)
+    scanTooltip:ClearLines()
+    scanTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+    scanTooltip:SetHyperlink(itemLink)
 
-    local isBOE = false
+    local isBOEValue = false
 
     for index = 2, 12 do
-        local leftText = _G["TMLMasterLooterScanTooltipTextLeft" .. index]
+        local leftText = _G["RTMasterLooterScanTooltipTextLeft" .. index]
         if leftText then
             local textValue = leftText:GetText()
 
             if textValue then
                 if textValue:find("Binds when equipped") then
-                    isBOE = true
+                    isBOEValue = true
                     break
                 end
 
                 if textValue:find("Binds when picked up") then
-                    isBOE = false
+                    isBOEValue = false
                     break
                 end
             end
         end
     end
 
-    TML.TOOLTIP:Hide()
+    scanTooltip:Hide()
 
-    return isBOE
+    return isBOEValue
 end
 
-function TML.ITEM.GetItemQuality(itemLink)
+local function getItemQuality(itemLink)
     local _, _, quality = GetItemInfo(itemLink)
     return quality
 end
 
-function TML.ITEM.IsIgnoredLootItem(itemLink)
+local function isIgnoredLootItem(itemLink)
     if not itemLink or itemLink == "" then
         return false
     end
@@ -386,8 +318,8 @@ function TML.ITEM.IsIgnoredLootItem(itemLink)
     return false
 end
 
-function TML.ITEM.GetCollectorNameForItem(itemLink, quality)
-    if TML.ITEM.IsItemBOE(itemLink) then
+local function getCollectorNameForItem(itemLink, quality)
+    if isItemBOE(itemLink) then
         return RTMasterLooterSave.boeCollector
     end
 
@@ -398,23 +330,19 @@ function TML.ITEM.GetCollectorNameForItem(itemLink, quality)
     return RTMasterLooterSave.lootCollector
 end
 
-------------------------------------------------------------
--- LOG / STATS HELPERS
-------------------------------------------------------------
-
-function TML.LOG.RebuildStatsFromLootLog()
-    local stats = TML.DB.CreateEmptyStats()
+local function rebuildStatsFromLootLog()
+    local stats = createEmptyStats()
     local lootLog = RTMasterLooterSave.lootLog or {}
 
     for index = 1, #lootLog do
         local entry = lootLog[index]
         local itemLink = entry.item
 
-        if not TML.ITEM.IsIgnoredLootItem(itemLink) then
-            local quality = TML.ITEM.GetItemQuality(itemLink)
+        if not isIgnoredLootItem(itemLink) then
+            local quality = getItemQuality(itemLink)
 
             if quality then
-                if TML.ITEM.IsItemBOE(itemLink) then
+                if isItemBOE(itemLink) then
                     stats.boe = stats.boe + 1
                 elseif quality == 5 then
                     stats.shards = stats.shards + 1
@@ -434,7 +362,67 @@ function TML.LOG.RebuildStatsFromLootLog()
     RTMasterLooterSave.stats = stats
 end
 
-function TML.LOG.AddLootLogEntry(itemLink, playerName)
+local function formatLogLine(entry)
+    local timeText = entry.time or "00:00:00"
+    local itemText = entry.item or "?"
+    local targetText = entry.to or "?"
+    return string.format("[%s] %s -> %s", timeText, itemText, targetText)
+end
+
+local function refreshLog()
+    if not UI.root or not UI.root:IsVisible() then
+        return
+    end
+
+    if not UI.bopScroll or not UI.boeScroll then
+        return
+    end
+
+    UI.bopScroll:Clear()
+    UI.boeScroll:Clear()
+
+    local lootLog = RTMasterLooterSave.lootLog or {}
+    local hasBOP = false
+    local hasBOE = false
+
+    for index = 1, #lootLog do
+        local entry = lootLog[index]
+
+        if not isIgnoredLootItem(entry.item) then
+            local line = formatLogLine(entry)
+
+            if isItemBOE(entry.item) then
+                hasBOE = true
+                UI.boeScroll:AddMessage(line)
+            else
+                hasBOP = true
+                UI.bopScroll:AddMessage(line)
+            end
+        end
+    end
+
+    if not hasBOP then
+        UI.bopScroll:AddMessage("No BOP logs.")
+    end
+
+    if not hasBOE then
+        UI.boeScroll:AddMessage("No BOE logs.")
+    end
+
+    if UI.bopCounter then
+        UI.bopCounter:SetText("Shard: " .. tostring((RTMasterLooterSave.stats and RTMasterLooterSave.stats.shards) or 0))
+    end
+
+    if UI.boeCounter then
+        UI.boeCounter:SetText("BOE: " .. tostring((RTMasterLooterSave.stats and RTMasterLooterSave.stats.boe) or 0))
+        UI.boeCounter:SetTextColor(0, 1, 0, 1)
+    end
+
+    UI.bopScroll:ScrollToBottom()
+    UI.boeScroll:ScrollToBottom()
+end
+
+local function addLootLogEntry(itemLink, playerName)
     local lootLog = RTMasterLooterSave.lootLog
 
     lootLog[#lootLog + 1] = {
@@ -443,58 +431,48 @@ function TML.LOG.AddLootLogEntry(itemLink, playerName)
         time = date("%H:%M"),
     }
 
-    if #lootLog > TML.CONST.MAX_LOG_ENTRIES then
+    if #lootLog > CONST.MAX_LOG_ENTRIES then
         table.remove(lootLog, 1)
     end
 
-    TML.LOG.RebuildStatsFromLootLog()
+    rebuildStatsFromLootLog()
 end
 
-function TML.LOG.ClearBOPHistory()
+local function clearBOPHistory()
     local oldLog = RTMasterLooterSave.lootLog or {}
     local newLog = {}
 
     for index = 1, #oldLog do
         local entry = oldLog[index]
 
-        if TML.ITEM.IsItemBOE(entry.item) then
+        if isItemBOE(entry.item) then
             newLog[#newLog + 1] = entry
         end
     end
 
     RTMasterLooterSave.lootLog = newLog
-    TML.LOG.RebuildStatsFromLootLog()
-
-    if TML.REFRESH.log then
-        TML.REFRESH.log()
-    end
+    rebuildStatsFromLootLog()
+    refreshLog()
 end
 
-function TML.LOG.ClearBOEHistory()
+local function clearBOEHistory()
     local oldLog = RTMasterLooterSave.lootLog or {}
     local newLog = {}
 
     for index = 1, #oldLog do
         local entry = oldLog[index]
 
-        if not TML.ITEM.IsItemBOE(entry.item) then
+        if not isItemBOE(entry.item) then
             newLog[#newLog + 1] = entry
         end
     end
 
     RTMasterLooterSave.lootLog = newLog
-    TML.LOG.RebuildStatsFromLootLog()
-
-    if TML.REFRESH.log then
-        TML.REFRESH.log()
-    end
+    rebuildStatsFromLootLog()
+    refreshLog()
 end
 
-------------------------------------------------------------
--- WHISPER HELPERS
-------------------------------------------------------------
-
-function TML.WHISPER.IsCollectorPlayer(playerName)
+local function isCollectorPlayer(playerName)
     if not playerName or playerName == "" then
         return false
     end
@@ -514,20 +492,20 @@ function TML.WHISPER.IsCollectorPlayer(playerName)
     return false
 end
 
-function TML.WHISPER.TryWhisperCollector(playerName, itemLink)
+local function tryWhisperCollector(playerName, itemLink)
     if RTMasterLooterSave.whisperEnabled ~= true then
         return
     end
 
-    if not TML.HELPER.IsPlayerMasterLooter() then
+    if not isPlayerMasterLooter() then
         return
     end
 
-    if playerName == TML.HELPER.GetPlayerName() then
+    if playerName == getPlayerName() then
         return
     end
 
-    if not TML.WHISPER.IsCollectorPlayer(playerName) then
+    if not isCollectorPlayer(playerName) then
         return
     end
 
@@ -539,11 +517,7 @@ function TML.WHISPER.TryWhisperCollector(playerName, itemLink)
     )
 end
 
-------------------------------------------------------------
--- LOOT MESSAGE HELPERS
-------------------------------------------------------------
-
-function TML.LOGIC.ParseLootMessage(messageText)
+local function parseLootMessage(messageText)
     local playerName, itemLink = messageText:match("([^%s]+) receives loot: (.+)%.")
     if playerName and itemLink then
         return playerName, itemLink
@@ -551,39 +525,28 @@ function TML.LOGIC.ParseLootMessage(messageText)
 
     local receivedItemLink = messageText:match("You receive loot: (.+)%.")
     if receivedItemLink then
-        return TML.HELPER.GetPlayerName(), receivedItemLink
+        return getPlayerName(), receivedItemLink
     end
 
     return nil, nil
 end
 
-function TML.LOG.FormatLogLine(entry)
-    local timeText = entry.time or "00:00:00"
-    local itemText = entry.item or "?"
-    local targetText = entry.to or "?"
-    return string.format("[%s] %s -> %s", timeText, itemText, targetText)
-end
-
-------------------------------------------------------------
--- CORE LOGIC
-------------------------------------------------------------
-
-function TML.LOGIC.DistributeLoot()
-    if not TML.STATE.isEnabled then
+local function distributeLoot()
+    if not STATE.isEnabled then
         return
     end
 
-    if not TML.HELPER.IsInRaidGroup() then
+    if not isInRaidGroup() then
         return
     end
 
-    if not TML.HELPER.IsPlayerMasterLooter() then
+    if not isPlayerMasterLooter() then
         return
     end
 
-    local candidateMap = TML.HELPER.BuildMasterLootCandidateMap()
+    local candidateMap = buildMasterLootCandidateMap()
     local lootItemCount = GetNumLootItems()
-    local playerName = TML.HELPER.GetPlayerName()
+    local playerName = getPlayerName()
     local selfCandidateIndex = candidateMap[playerName]
 
     for slotIndex = 1, lootItemCount do
@@ -591,7 +554,7 @@ function TML.LOGIC.DistributeLoot()
         local itemLink = GetLootSlotLink(slotIndex)
 
         if itemLink and quality then
-            local collectorName = TML.ITEM.GetCollectorNameForItem(itemLink, quality)
+            local collectorName = getCollectorNameForItem(itemLink, quality)
             local candidateIndex = candidateMap[collectorName]
 
             if not candidateIndex then
@@ -605,12 +568,12 @@ function TML.LOGIC.DistributeLoot()
     end
 end
 
-function TML.LOGIC.HandleLootMessage(messageText)
-    if not TML.HELPER.IsInRaidGroup() then
+local function handleLootMessage(messageText)
+    if not isInRaidGroup() then
         return
     end
 
-    local playerName, itemLink = TML.LOGIC.ParseLootMessage(messageText)
+    local playerName, itemLink = parseLootMessage(messageText)
 
     if not playerName or not itemLink then
         return
@@ -620,64 +583,21 @@ function TML.LOGIC.HandleLootMessage(messageText)
         return
     end
 
-    local quality = TML.ITEM.GetItemQuality(itemLink)
+    local quality = getItemQuality(itemLink)
     if not quality then
         return
     end
 
-    if TML.ITEM.IsIgnoredLootItem(itemLink) then
+    if isIgnoredLootItem(itemLink) then
         return
     end
 
-    TML.LOG.AddLootLogEntry(itemLink, playerName)
-
-    if TML.REFRESH.log then
-        TML.REFRESH.log()
-    end
-
-    TML.WHISPER.TryWhisperCollector(playerName, itemLink)
+    addLootLogEntry(itemLink, playerName)
+    refreshLog()
+    tryWhisperCollector(playerName, itemLink)
 end
 
-------------------------------------------------------------
--- TEST COMMAND
-------------------------------------------------------------
-
-SLASH_RTMLTEST1 = "/rtmltest"
-SlashCmdList["RTMLTEST"] = function(messageText)
-    TML.DB.EnsureSavedVariables()
-
-    local inputText = messageText and strtrim(messageText) or ""
-
-    if inputText == "" then
-        print("Usage: /rtmltest [itemLink]")
-        return
-    end
-
-    local _, itemLink, quality = GetItemInfo(inputText)
-
-    if not quality then
-        print("Item:", inputText)
-        print("Quality: nil")
-        print("Bind: unknown")
-        print("Target: unknown")
-        return
-    end
-
-    local resolvedItemLink = itemLink or inputText
-    local bindType = TML.ITEM.IsItemBOE(resolvedItemLink) and "BOE" or "BOP"
-    local targetName = TML.ITEM.GetCollectorNameForItem(resolvedItemLink, quality)
-
-    print("Item:", resolvedItemLink)
-    print("Quality:", TML.CONST.QUALITY_NAMES[quality] or tostring(quality))
-    print("Bind:", bindType)
-    print("Target:", targetName)
-end
-
-------------------------------------------------------------
--- TML.UI STYLE HELPERS
-------------------------------------------------------------
-
-function TML.STYLE.ApplyBackdrop(frame, bgR, bgG, bgB, bgA, borderR, borderG, borderB, borderA)
+local function applyBackdrop(frame, bgR, bgG, bgB, bgA, borderR, borderG, borderB, borderA)
     frame:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
@@ -688,25 +608,115 @@ function TML.STYLE.ApplyBackdrop(frame, bgR, bgG, bgB, bgA, borderR, borderG, bo
     frame:SetBackdropBorderColor(borderR, borderG, borderB, borderA)
 end
 
-function TML.STYLE.ApplyPanelStyle(frame)
-    TML.STYLE.ApplyBackdrop(frame, 0.0, 0.0, 0.0, 0.9, 0.3, 0.3, 0.3, 1)
+local function applyPanelStyle(frame)
+    applyBackdrop(frame, 0.0, 0.0, 0.0, 0.9, 0.3, 0.3, 0.3, 1)
 end
 
-function TML.STYLE.ApplyInputStyle(frame)
-    TML.STYLE.ApplyBackdrop(frame, 0.0, 0.0, 0.0, 1.0, 0.4, 0.4, 0.4, 1)
+local function applyInputStyle(frame)
+    applyBackdrop(frame, 0.0, 0.0, 0.0, 1.0, 0.4, 0.4, 0.4, 1)
 end
 
-function TML.BUILDER.CreateSectionPanel(parent, width, height)
+local function skinButton(button, skinModule)
+    if skinModule and skinModule.HandleButton then
+        skinModule:HandleButton(button)
+    end
+end
+
+local function skinCheckBox(checkBox, skinModule)
+    if skinModule and skinModule.HandleCheckBox then
+        skinModule:HandleCheckBox(checkBox)
+    end
+end
+
+local function updateToggleButtonText()
+    if not UI.toggleButton then
+        return
+    end
+
+    if STATE.isEnabled then
+        UI.toggleButton:SetText("|cff00ff00Enabled|r")
+    else
+        UI.toggleButton:SetText("Start Master Looter")
+    end
+end
+
+local function updateWhisperCheckBox()
+    if not UI.whisperCheckBox then
+        return
+    end
+
+    UI.whisperCheckBox:SetChecked(RTMasterLooterSave.whisperEnabled == true)
+end
+
+local function updateCollectorInputValues()
+    for saveKey, editBox in pairs(UI.collectorInputs) do
+        if editBox then
+            editBox:SetText(RTMasterLooterSave[saveKey] or getPlayerName())
+        end
+    end
+end
+
+local function refreshStatus()
+    if not UI.statusText or not UI.raidLeaderText or not UI.makeMLButton then
+        return
+    end
+
+    local isInRaidValue = isInRaidGroup()
+    local isMasterLooterValue = isPlayerMasterLooter()
+    local isLeaderOrAssistValue = isPlayerLeaderOrAssistant()
+    local isRaidLeaderValue = isPlayerRaidLeader()
+
+    if not isInRaidValue then
+        UI.statusText:SetText("|cffffff00Not In Raid|r")
+        UI.raidLeaderText:SetText("")
+        UI.makeMLButton:Hide()
+        return
+    end
+
+    if isMasterLooterValue then
+        UI.statusText:SetText("|cff00ff00Master Looter|r")
+    else
+        UI.statusText:SetText("|cffff2020WARNING: Not Master Looter|r")
+    end
+
+    if isRaidLeaderValue then
+        UI.raidLeaderText:SetText("|cff00ff00Raid Leader|r")
+    elseif isLeaderOrAssistValue then
+        UI.raidLeaderText:SetText("|cffffcc00Assist / Can't Set ML|r")
+    else
+        UI.raidLeaderText:SetText("|cffffaa00Not Raid Leader|r")
+    end
+
+    if isLeaderOrAssistValue and not isMasterLooterValue then
+        UI.makeMLButton:Show()
+    else
+        UI.makeMLButton:Hide()
+    end
+end
+
+local function refreshControls()
+    updateToggleButtonText()
+    updateWhisperCheckBox()
+    updateCollectorInputValues()
+    refreshStatus()
+end
+
+local function refreshUI()
+    refreshControls()
+    refreshLog()
+end
+
+local function createSectionPanel(parent, width, height)
     local frame = CreateFrame("Frame", nil, parent)
     frame:SetSize(width, height)
-    TML.STYLE.ApplyPanelStyle(frame)
+    applyPanelStyle(frame)
     return frame
 end
 
-function TML.BUILDER.CreatePixelInput(parent, width, height)
+local function createPixelInput(parent, width, height)
     local background = CreateFrame("Frame", nil, parent)
     background:SetSize(width, height)
-    TML.STYLE.ApplyInputStyle(background)
+    applyInputStyle(background)
 
     local editBox = CreateFrame("EditBox", nil, background)
     editBox:SetPoint("TOPLEFT", 4, 0)
@@ -729,21 +739,7 @@ function TML.BUILDER.CreatePixelInput(parent, width, height)
     return background, editBox
 end
 
-function TML.STYLE.SkinButton(button, skinModule)
-    if skinModule and skinModule.HandleButton then
-        skinModule:HandleButton(button)
-        return
-    end
-end
-
-function TML.STYLE.SkinCheckBox(checkBox, skinModule)
-    if skinModule and skinModule.HandleCheckBox then
-        skinModule:HandleCheckBox(checkBox)
-        return
-    end
-end
-
-function TML.BUILDER.SetCollectorValue(editBox, saveKey, value)
+local function setCollectorValue(editBox, saveKey, value)
     if not value or value == "" then
         return
     end
@@ -752,165 +748,14 @@ function TML.BUILDER.SetCollectorValue(editBox, saveKey, value)
     RTMasterLooterSave[saveKey] = value
 end
 
-------------------------------------------------------------
--- TML.UI STATUS HELPERS
-------------------------------------------------------------
-
-function TML.REFRESH.UpdateToggleButtonText()
-    if not TML.UI.toggleButton then
-        return
-    end
-
-    if TML.STATE.isEnabled then
-        TML.UI.toggleButton:SetText("|cff00ff00Enabled|r")
-    else
-        TML.UI.toggleButton:SetText("Start Master Looter")
-    end
-end
-
-function TML.REFRESH.UpdateWhisperCheckBox()
-    if not TML.UI.whisperCheckBox then
-        return
-    end
-
-    TML.UI.whisperCheckBox:SetChecked(RTMasterLooterSave.whisperEnabled == true)
-end
-
-function TML.REFRESH.UpdateCollectorInputValues()
-    for saveKey, editBox in pairs(TML.UI.collectorInputs) do
-        if editBox then
-            editBox:SetText(RTMasterLooterSave[saveKey] or TML.HELPER.GetPlayerName())
-        end
-    end
-end
-
-TML.REFRESH.status = function()
-    if not TML.UI.statusText or not TML.UI.raidLeaderText or not TML.UI.makeMLButton then
-        return
-    end
-
-    local isInRaid = TML.HELPER.IsInRaidGroup()
-    local isMasterLooter = TML.HELPER.IsPlayerMasterLooter()
-    local isLeaderOrAssist = TML.HELPER.IsPlayerLeaderOrAssistant()
-    local isRaidLeader = TML.HELPER.IsPlayerRaidLeader()
-
-    if not isInRaid then
-        TML.UI.statusText:SetText("|cffffff00Not In Raid|r")
-        TML.UI.raidLeaderText:SetText("")
-        TML.UI.makeMLButton:Hide()
-        return
-    end
-
-    if isMasterLooter then
-        TML.UI.statusText:SetText("|cff00ff00Master Looter|r")
-    else
-        TML.UI.statusText:SetText("|cffff2020WARNING: Not Master Looter|r")
-    end
-
-    if isRaidLeader then
-        TML.UI.raidLeaderText:SetText("|cff00ff00Raid Leader|r")
-    elseif isLeaderOrAssist then
-        TML.UI.raidLeaderText:SetText("|cffffcc00Assist / Can't Set ML|r")
-    else
-        TML.UI.raidLeaderText:SetText("|cffffaa00Not Raid Leader|r")
-    end
-
-    if isLeaderOrAssist and not isMasterLooter then
-        TML.UI.makeMLButton:Show()
-    else
-        TML.UI.makeMLButton:Hide()
-    end
-end
-
-TML.REFRESH.controls = function()
-    TML.REFRESH.UpdateToggleButtonText()
-    TML.REFRESH.UpdateWhisperCheckBox()
-    TML.REFRESH.UpdateCollectorInputValues()
-
-    if TML.REFRESH.status then
-        TML.REFRESH.status()
-    end
-end
-
-------------------------------------------------------------
--- TML.UI LOG TML.REFRESH
-------------------------------------------------------------
-
-TML.REFRESH.log = function()
-    if not TML.UI.root or not TML.UI.root:IsVisible() then
-        return
-    end
-
-    if not TML.UI.bopScroll or not TML.UI.boeScroll then
-        return
-    end
-
-    TML.UI.bopScroll:Clear()
-    TML.UI.boeScroll:Clear()
-
-    local lootLog = RTMasterLooterSave.lootLog or {}
-    local hasBOP = false
-    local hasBOE = false
-
-    for index = 1, #lootLog do
-        local entry = lootLog[index]
-
-        if not TML.ITEM.IsIgnoredLootItem(entry.item) then
-            local line = TML.LOG.FormatLogLine(entry)
-
-            if TML.ITEM.IsItemBOE(entry.item) then
-                hasBOE = true
-                TML.UI.boeScroll:AddMessage(line)
-            else
-                hasBOP = true
-                TML.UI.bopScroll:AddMessage(line)
-            end
-        end
-    end
-
-    if not hasBOP then
-        TML.UI.bopScroll:AddMessage("No BOP logs.")
-    end
-
-    if not hasBOE then
-        TML.UI.boeScroll:AddMessage("No BOE logs.")
-    end
-
-    if TML.UI.bopCounter then
-        TML.UI.bopCounter:SetText("Shard: " .. tostring((RTMasterLooterSave.stats and RTMasterLooterSave.stats.shards) or 0))
-    end
-
-    if TML.UI.boeCounter then
-        TML.UI.boeCounter:SetText("BOE: " .. tostring((RTMasterLooterSave.stats and RTMasterLooterSave.stats.boe) or 0))
-        TML.UI.boeCounter:SetTextColor(0, 1, 0, 1)
-    end
-
-    TML.UI.bopScroll:ScrollToBottom()
-    TML.UI.boeScroll:ScrollToBottom()
-end
-
-function TML.REFRESH.RefreshUI()
-    if TML.REFRESH.controls then
-        TML.REFRESH.controls()
-    end
-
-    if TML.REFRESH.log then
-        TML.REFRESH.log()
-    end
-end
-
-------------------------------------------------------------
--- TML.UI BUILDERS
-------------------------------------------------------------
-
-function TML.BUILDER.CreateLogScrollFrame(parent, globalName)
+local function createLogScrollFrame(parent, globalName)
     local scroll = CreateFrame("ScrollingMessageFrame", globalName, parent)
     scroll:SetPoint("TOPLEFT", 8, -26)
     scroll:SetPoint("BOTTOMRIGHT", -8, 8)
     scroll:SetFontObject(ChatFontSmall)
     scroll:SetJustifyH("LEFT")
     scroll:SetFading(false)
-    scroll:SetMaxLines(TML.CONST.MAX_LOG_ENTRIES)
+    scroll:SetMaxLines(CONST.MAX_LOG_ENTRIES)
     scroll:SetInsertMode("BOTTOM")
     scroll:SetIndentedWordWrap(false)
     scroll:EnableMouse(true)
@@ -927,8 +772,8 @@ function TML.BUILDER.CreateLogScrollFrame(parent, globalName)
     return scroll
 end
 
-function TML.BUILDER.CreateLogPanel(parent, skinModule, side)
-    local panel = TML.BUILDER.CreateSectionPanel(parent, 1, TML.CONST.LOG_SECTION_HEIGHT)
+local function createLogPanel(parent, skinModule, side)
+    local panel = createSectionPanel(parent, 1, CONST.LOG_SECTION_HEIGHT)
 
     local title = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     title:SetTextColor(1, 0.82, 0, 1)
@@ -939,16 +784,14 @@ function TML.BUILDER.CreateLogPanel(parent, skinModule, side)
     local clearButton = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     clearButton:SetSize(46, 18)
     clearButton:SetText("Clear")
-    TML.STYLE.SkinButton(clearButton, skinModule)
+    skinButton(clearButton, skinModule)
 
-    local scrollName
-    if side == "LEFT" then
-        scrollName = "TMLMasterLooterBOPScrollFrame"
-    else
-        scrollName = "TMLMasterLooterBOEScrollFrame"
+    local scrollName = "RTMasterLooterBOPScrollFrame"
+    if side ~= "LEFT" then
+        scrollName = "RTMasterLooterBOEScrollFrame"
     end
 
-    local scroll = TML.BUILDER.CreateLogScrollFrame(panel, scrollName)
+    local scroll = createLogScrollFrame(panel, scrollName)
 
     if side == "LEFT" then
         title:SetText("Recent BOP Loot")
@@ -963,24 +806,24 @@ function TML.BUILDER.CreateLogPanel(parent, skinModule, side)
     return panel, title, counter, clearButton, scroll
 end
 
-function TML.BUILDER.CreateLogSection(parentFrame, skinModule)
+local function createLogSection(parentFrame, skinModule)
     local section = CreateFrame("Frame", nil, parentFrame)
-    section:SetPoint("TOPLEFT", TML.CONST.OUTER_LEFT, TML.CONST.TOP_OFFSET)
-    section:SetPoint("TOPRIGHT", -TML.CONST.OUTER_RIGHT, TML.CONST.TOP_OFFSET)
-    section:SetHeight(TML.CONST.LOG_SECTION_HEIGHT)
+    section:SetPoint("TOPLEFT", CONST.OUTER_LEFT, CONST.TOP_OFFSET)
+    section:SetPoint("TOPRIGHT", -CONST.OUTER_RIGHT, CONST.TOP_OFFSET)
+    section:SetHeight(CONST.LOG_SECTION_HEIGHT)
 
-    local halfWidth = (section:GetWidth() - TML.CONST.LOG_GAP) / 2
+    local halfWidth = (section:GetWidth() - CONST.LOG_GAP) / 2
     if not halfWidth or halfWidth <= 0 then
         halfWidth = 400
     end
 
-    TML.UI.logSection = section
+    UI.logSection = section
 
-    local bopPanel, bopTitle, bopCounter, bopClearButton, bopScroll = TML.BUILDER.CreateLogPanel(section, skinModule, "LEFT")
+    local bopPanel, bopTitle, bopCounter, bopClearButton, bopScroll = createLogPanel(section, skinModule, "LEFT")
     bopPanel:SetPoint("TOPLEFT", 0, 0)
     bopPanel:SetWidth(halfWidth)
 
-    local boePanel, boeTitle, boeCounter, boeClearButton, boeScroll = TML.BUILDER.CreateLogPanel(section, skinModule, "RIGHT")
+    local boePanel, boeTitle, boeCounter, boeClearButton, boeScroll = createLogPanel(section, skinModule, "RIGHT")
     boePanel:SetPoint("TOPRIGHT", 0, 0)
     boePanel:SetWidth(halfWidth)
 
@@ -992,45 +835,45 @@ function TML.BUILDER.CreateLogSection(parentFrame, skinModule)
     boeCounter:SetPoint("BOTTOMRIGHT", boePanel, "TOPRIGHT", -54, 4)
     boeClearButton:SetPoint("BOTTOMRIGHT", boePanel, "TOPRIGHT", 0, 2)
 
-    TML.UI.bopPanel = bopPanel
-    TML.UI.boePanel = boePanel
-    TML.UI.bopTitle = bopTitle
-    TML.UI.boeTitle = boeTitle
-    TML.UI.bopCounter = bopCounter
-    TML.UI.boeCounter = boeCounter
-    TML.UI.bopClearButton = bopClearButton
-    TML.UI.boeClearButton = boeClearButton
-    TML.UI.bopScroll = bopScroll
-    TML.UI.boeScroll = boeScroll
+    UI.bopPanel = bopPanel
+    UI.boePanel = boePanel
+    UI.bopTitle = bopTitle
+    UI.boeTitle = boeTitle
+    UI.bopCounter = bopCounter
+    UI.boeCounter = boeCounter
+    UI.bopClearButton = bopClearButton
+    UI.boeClearButton = boeClearButton
+    UI.bopScroll = bopScroll
+    UI.boeScroll = boeScroll
 
-    TML.UI.bopClearButton:SetScript("OnClick", function()
-        TML.LOG.ClearBOPHistory()
+    UI.bopClearButton:SetScript("OnClick", function()
+        clearBOPHistory()
     end)
 
-    TML.UI.boeClearButton:SetScript("OnClick", function()
-        TML.LOG.ClearBOEHistory()
+    UI.boeClearButton:SetScript("OnClick", function()
+        clearBOEHistory()
     end)
 
     section:SetScript("OnSizeChanged", function(self)
         local width = self:GetWidth()
-        local panelWidth = math.floor((width - TML.CONST.LOG_GAP) / 2)
+        local panelWidth = math.floor((width - CONST.LOG_GAP) / 2)
 
         if panelWidth < 120 then
             panelWidth = 120
         end
 
-        TML.UI.bopPanel:SetWidth(panelWidth)
-        TML.UI.boePanel:SetWidth(panelWidth)
+        UI.bopPanel:SetWidth(panelWidth)
+        UI.boePanel:SetWidth(panelWidth)
     end)
 end
 
-function TML.BUILDER.CreateStatusSection(parentFrame, skinModule)
-    local panel = TML.BUILDER.CreateSectionPanel(parentFrame, 1, TML.CONST.STATUS_HEIGHT)
+local function createStatusSection(parentFrame, skinModule)
+    local panel = createSectionPanel(parentFrame, 1, CONST.STATUS_HEIGHT)
 
     local statusText = panel:CreateFontString(nil, "OVERLAY")
     statusText:SetFont(STANDARD_TEXT_FONT, 16, "OUTLINE")
     statusText:SetJustifyH("LEFT")
-    statusText:SetPoint("TOPLEFT", panel, "TOPLEFT", 12, -TML.CONST.STATUS_INNER_TOP_PADDING)
+    statusText:SetPoint("TOPLEFT", panel, "TOPLEFT", 12, -CONST.STATUS_INNER_TOP_PADDING)
     statusText:SetPoint("RIGHT", panel, "RIGHT", -12, 0)
 
     local raidLeaderText = panel:CreateFontString(nil, "OVERLAY")
@@ -1043,22 +886,20 @@ function TML.BUILDER.CreateStatusSection(parentFrame, skinModule)
     makeMLButton:SetSize(140, 24)
     makeMLButton:SetText("Make Me ML")
     makeMLButton:SetPoint("TOPLEFT", raidLeaderText, "BOTTOMLEFT", 0, -10)
-    TML.STYLE.SkinButton(makeMLButton, skinModule)
+    skinButton(makeMLButton, skinModule)
 
     makeMLButton:SetScript("OnClick", function()
-        SetLootMethod("master", TML.HELPER.GetPlayerName())
-        if TML.REFRESH.status then
-            TML.REFRESH.status()
-        end
+        SetLootMethod("master", getPlayerName())
+        refreshStatus()
     end)
 
-    TML.UI.statusPanel = panel
-    TML.UI.statusText = statusText
-    TML.UI.raidLeaderText = raidLeaderText
-    TML.UI.makeMLButton = makeMLButton
+    UI.statusPanel = panel
+    UI.statusText = statusText
+    UI.raidLeaderText = raidLeaderText
+    UI.makeMLButton = makeMLButton
 end
 
-function TML.BUILDER.CreateCollectorRow(parentFrame, skinModule, labelText, saveKey, yOffset)
+local function createCollectorRow(parentFrame, skinModule, labelText, saveKey, yOffset)
     local row = CreateFrame("Frame", nil, parentFrame)
     row:SetPoint("TOPLEFT", 8, yOffset)
     row:SetPoint("TOPRIGHT", -8, yOffset)
@@ -1066,62 +907,62 @@ function TML.BUILDER.CreateCollectorRow(parentFrame, skinModule, labelText, save
 
     local label = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     label:SetPoint("LEFT", 0, 0)
-    label:SetWidth(TML.CONST.LABEL_WIDTH)
+    label:SetWidth(CONST.LABEL_WIDTH)
     label:SetJustifyH("LEFT")
     label:SetText(labelText)
 
     local selfButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-    selfButton:SetSize(TML.CONST.SELF_WIDTH, 24)
+    selfButton:SetSize(CONST.SELF_WIDTH, 24)
     selfButton:SetPoint("RIGHT", 0, 0)
     selfButton:SetText("Self")
-    TML.STYLE.SkinButton(selfButton, skinModule)
+    skinButton(selfButton, skinModule)
 
     local targetButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-    targetButton:SetSize(TML.CONST.TARGET_WIDTH, 24)
+    targetButton:SetSize(CONST.TARGET_WIDTH, 24)
     targetButton:SetPoint("RIGHT", selfButton, "LEFT", -4, 0)
     targetButton:SetText("Target")
-    TML.STYLE.SkinButton(targetButton, skinModule)
+    skinButton(targetButton, skinModule)
 
-    local inputBackground, editBox = TML.BUILDER.CreatePixelInput(row, TML.CONST.INPUT_WIDTH, 24)
+    local inputBackground, editBox = createPixelInput(row, CONST.INPUT_WIDTH, 24)
     inputBackground:SetPoint("LEFT", label, "RIGHT", 8, 0)
     inputBackground:SetPoint("RIGHT", targetButton, "LEFT", -6, 0)
 
-    editBox:SetText(RTMasterLooterSave[saveKey] or TML.HELPER.GetPlayerName())
+    editBox:SetText(RTMasterLooterSave[saveKey] or getPlayerName())
     editBox:SetScript("OnTextChanged", function(self)
         RTMasterLooterSave[saveKey] = self:GetText()
     end)
 
     targetButton:SetScript("OnClick", function()
-        TML.BUILDER.SetCollectorValue(editBox, saveKey, UnitName("target"))
+        setCollectorValue(editBox, saveKey, UnitName("target"))
     end)
 
     selfButton:SetScript("OnClick", function()
-        TML.BUILDER.SetCollectorValue(editBox, saveKey, TML.HELPER.GetPlayerName())
+        setCollectorValue(editBox, saveKey, getPlayerName())
     end)
 
-    TML.UI.collectorInputs[saveKey] = editBox
+    UI.collectorInputs[saveKey] = editBox
 end
 
-function TML.BUILDER.CreateCollectorSection(parentFrame, skinModule)
-    local panel = TML.BUILDER.CreateSectionPanel(parentFrame, 1, TML.CONST.COLLECTOR_HEIGHT)
+local function createCollectorSection(parentFrame, skinModule)
+    local panel = createSectionPanel(parentFrame, 1, CONST.COLLECTOR_HEIGHT)
 
     local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    title:SetPoint("BOTTOMLEFT", panel, "TOPLEFT", 0, TML.CONST.COLLECTOR_TITLE_GAP)
+    title:SetPoint("BOTTOMLEFT", panel, "TOPLEFT", 0, CONST.COLLECTOR_TITLE_GAP)
     title:SetTextColor(1, 0.82, 0, 1)
     title:SetText("Collectors")
 
-    TML.BUILDER.CreateCollectorRow(panel, skinModule, "Main Loot:", "lootCollector", -12)
-    TML.BUILDER.CreateCollectorRow(panel, skinModule, "Shard:", "shardsCollector", -42)
-    TML.BUILDER.CreateCollectorRow(panel, skinModule, "BoE Collector:", "boeCollector", -72)
+    createCollectorRow(panel, skinModule, "Main Loot:", "lootCollector", -12)
+    createCollectorRow(panel, skinModule, "Shard:", "shardsCollector", -42)
+    createCollectorRow(panel, skinModule, "BoE Collector:", "boeCollector", -72)
 
-    TML.UI.collectorPanel = panel
+    UI.collectorPanel = panel
 end
 
-function TML.BUILDER.CreateWhisperSection(parentFrame, skinModule)
+local function createWhisperSection(parentFrame, skinModule)
     local checkBox = CreateFrame("CheckButton", nil, parentFrame, "ChatConfigCheckButtonTemplate")
     checkBox:SetSize(24, 24)
     checkBox:SetPoint("BOTTOMLEFT", 16, 10)
-    TML.STYLE.SkinCheckBox(checkBox, skinModule)
+    skinCheckBox(checkBox, skinModule)
 
     checkBox:SetScript("OnClick", function(self)
         RTMasterLooterSave.whisperEnabled = self:GetChecked() and true or false
@@ -1131,195 +972,205 @@ function TML.BUILDER.CreateWhisperSection(parentFrame, skinModule)
     label:SetPoint("LEFT", checkBox, "RIGHT", 2, 0)
     label:SetText("Whisper Winner")
 
-    TML.UI.whisperCheckBox = checkBox
-    TML.UI.whisperLabel = label
+    UI.whisperCheckBox = checkBox
+    UI.whisperLabel = label
 end
 
-function TML.BUILDER.CreateBottomButtons(parentFrame, onClose, skinModule)
+local function createBottomButtons(parentFrame, onClose, skinModule)
     local toggleButton = CreateFrame("Button", nil, parentFrame, "UIPanelButtonTemplate")
     toggleButton:SetSize(170, 28)
     toggleButton:SetPoint("BOTTOMRIGHT", -18, 12)
-    TML.STYLE.SkinButton(toggleButton, skinModule)
+    skinButton(toggleButton, skinModule)
 
     toggleButton:SetScript("OnClick", function()
-        TML.STATE.isEnabled = not TML.STATE.isEnabled
-        RTMasterLooterSave.enabled = TML.STATE.isEnabled
+        STATE.isEnabled = not STATE.isEnabled
+        RTMasterLooterSave.enabled = STATE.isEnabled
 
         if RefreshStatusOverlay then
             RefreshStatusOverlay()
         end
 
-        if TML.REFRESH.controls then
-            TML.REFRESH.controls()
-        end
+        refreshControls()
     end)
 
     local closeButton = CreateFrame("Button", nil, parentFrame, "UIPanelButtonTemplate")
     closeButton:SetSize(100, 28)
     closeButton:SetPoint("RIGHT", toggleButton, "LEFT", -10, 0)
     closeButton:SetText("Close")
-    TML.STYLE.SkinButton(closeButton, skinModule)
+    skinButton(closeButton, skinModule)
 
     closeButton:SetScript("OnClick", onClose)
 
-    TML.UI.toggleButton = toggleButton
-    TML.UI.closeButton = closeButton
+    UI.toggleButton = toggleButton
+    UI.closeButton = closeButton
 end
 
-------------------------------------------------------------
--- PUBLIC TML.UI ENTRY
-------------------------------------------------------------
+local function updateBottomSections()
+    if not UI.logSection then
+        return
+    end
 
-function TML.API.CreateMasterLooterTabContent(parent, onClose)
-    TML.DB.EnsureSavedVariables()
-    TML.LOG.RebuildStatsFromLootLog()
+    local width = UI.logSection:GetWidth()
+    local half = math.floor((width - CONST.LOG_GAP) / 2)
+
+    if half < 150 then
+        half = 150
+    end
+
+    if UI.collectorPanel then
+        UI.collectorPanel:ClearAllPoints()
+        UI.collectorPanel:SetWidth(half)
+        UI.collectorPanel:SetPoint("TOPLEFT", UI.logSection, "BOTTOMLEFT", 0, -CONST.SECTION_GAP)
+    end
+
+    if UI.statusPanel then
+        UI.statusPanel:ClearAllPoints()
+        UI.statusPanel:SetWidth(half)
+        UI.statusPanel:SetHeight(CONST.STATUS_HEIGHT)
+        UI.statusPanel:SetPoint("TOPRIGHT", UI.logSection, "BOTTOMRIGHT", 0, -CONST.SECTION_GAP)
+    end
+end
+
+local function createMasterLooterTabContent(parent, onClose)
+    ensureSavedVariables()
+    rebuildStatsFromLootLog()
 
     local frame = CreateFrame("Frame", nil, parent)
     frame:SetAllPoints()
     frame:Hide()
 
-    TML.UI.root = frame
-    TML.UI.collectorInputs = {}
+    UI.root = frame
+    UI.collectorInputs = {}
 
-    local _, skinModule = TML.HELPER.GetSkinModule()
+    local skinModule = getSkinModule()
 
-    TML.BUILDER.CreateLogSection(frame, skinModule)
-    TML.BUILDER.CreateStatusSection(frame, skinModule)
-    TML.BUILDER.CreateCollectorSection(frame, skinModule)
-    TML.BUILDER.CreateWhisperSection(frame, skinModule)
-    TML.BUILDER.CreateBottomButtons(frame, onClose, skinModule)
+    createLogSection(frame, skinModule)
+    createStatusSection(frame, skinModule)
+    createCollectorSection(frame, skinModule)
+    createWhisperSection(frame, skinModule)
+    createBottomButtons(frame, onClose, skinModule)
 
-    function TML.BUILDER.UpdateBottomSections()
-        if not TML.UI.logSection then
-            return
-        end
-
-        local width = TML.UI.logSection:GetWidth()
-        local half = math.floor((width - TML.CONST.LOG_GAP) / 2)
-
-        if half < 150 then
-            half = 150
-        end
-
-        if TML.UI.collectorPanel then
-            TML.UI.collectorPanel:ClearAllPoints()
-            TML.UI.collectorPanel:SetWidth(half)
-            TML.UI.collectorPanel:SetPoint("TOPLEFT", TML.UI.logSection, "BOTTOMLEFT", 0, -TML.CONST.SECTION_GAP)
-        end
-
-        if TML.UI.statusPanel then
-            TML.UI.statusPanel:ClearAllPoints()
-            TML.UI.statusPanel:SetWidth(half)
-            TML.UI.statusPanel:SetHeight(TML.CONST.STATUS_HEIGHT)
-            TML.UI.statusPanel:SetPoint("TOPRIGHT", TML.UI.logSection, "BOTTOMRIGHT", 0, -TML.CONST.SECTION_GAP)
-        end
-    end
-
-    if TML.UI.logSection then
-        TML.UI.logSection:HookScript("OnSizeChanged", function()
-            TML.BUILDER.UpdateBottomSections()
+    if UI.logSection then
+        UI.logSection:HookScript("OnSizeChanged", function()
+            updateBottomSections()
         end)
     end
 
     frame:SetScript("OnShow", function()
-        TML.DB.EnsureSavedVariables()
-        TML.LOG.RebuildStatsFromLootLog()
-        TML.STATE.isEnabled = RTMasterLooterSave.enabled == true
-        TML.BUILDER.UpdateBottomSections()
-        TML.REFRESH.RefreshUI()
+        ensureSavedVariables()
+        rebuildStatsFromLootLog()
+        STATE.isEnabled = RTMasterLooterSave.enabled == true
+        updateBottomSections()
+        refreshUI()
     end)
 
-    frame:SetScript("OnUpdate", function(self, elapsed)
-        TML.STATE.statusElapsed = TML.STATE.statusElapsed + elapsed
+    frame:SetScript("OnUpdate", function(_, elapsed)
+        STATE.statusElapsed = STATE.statusElapsed + elapsed
 
-        if TML.STATE.statusElapsed < 0.2 then
+        if STATE.statusElapsed < 0.2 then
             return
         end
 
-        TML.STATE.statusElapsed = 0
-
-        if TML.REFRESH.status then
-            TML.REFRESH.status()
-        end
+        STATE.statusElapsed = 0
+        refreshStatus()
     end)
 
     return frame
 end
 
-
-
-function CreateMasterLooterTabContent(parent, onClose)
-    return TML.API.CreateMasterLooterTabContent(parent, onClose)
-end
-
-------------------------------------------------------------
--- EVENT HANDLERS
-------------------------------------------------------------
-
-function TML.EVENTS.HandleAddonLoaded(loadedAddonName)
+local function handleAddonLoaded(loadedAddonName)
     if loadedAddonName ~= addonName then
         return
     end
 
-    TML.DB.EnsureSavedVariables()
-    TML.LOG.RebuildStatsFromLootLog()
-    TML.STATE.isEnabled = RTMasterLooterSave.enabled == true
+    ensureSavedVariables()
+    rebuildStatsFromLootLog()
+    STATE.isEnabled = RTMasterLooterSave.enabled == true
 
     if RefreshStatusOverlay then
         RefreshStatusOverlay()
     end
 
-    TML.LOADER_FRAME:UnregisterEvent("ADDON_LOADED")
+    loaderFrame:UnregisterEvent("ADDON_LOADED")
 end
 
-function TML.EVENTS.HandleMainEvent(event, ...)
+local function handleMainEvent(event, ...)
     if event == "LOOT_OPENED" then
-        TML.LOGIC.DistributeLoot()
+        distributeLoot()
         return
     end
 
     if event == "CHAT_MSG_LOOT" then
-        TML.LOGIC.HandleLootMessage(...)
+        handleLootMessage(...)
         return
     end
 
     if event == "PARTY_LOOT_METHOD_CHANGED" then
-        if TML.REFRESH.status then
-            TML.REFRESH.status()
-        end
+        refreshStatus()
         return
     end
 
     if event == "GROUP_ROSTER_UPDATE" then
-        if TML.REFRESH.status then
-            TML.REFRESH.status()
-        end
+        refreshStatus()
         return
     end
 
     if event == "PLAYER_ENTERING_WORLD" then
-        if TML.REFRESH.status then
-            TML.REFRESH.status()
-        end
+        refreshStatus()
     end
 end
 
-------------------------------------------------------------
--- EVENT REGISTRATION
-------------------------------------------------------------
+local function isMasterLooterEnabled()
+    return STATE.isEnabled
+end
 
-TML.LOADER_FRAME:RegisterEvent("ADDON_LOADED")
-TML.LOADER_FRAME:SetScript("OnEvent", function(self, event, ...)
+SLASH_RTMLTEST1 = "/rtmltest"
+SlashCmdList["RTMLTEST"] = function(messageText)
+    ensureSavedVariables()
+
+    local inputText = messageText and strtrim(messageText) or ""
+
+    if inputText == "" then
+        print("Usage: /rtmltest [itemLink]")
+        return
+    end
+
+    local _, itemLink, quality = GetItemInfo(inputText)
+
+    if not quality then
+        print("Item:", inputText)
+        print("Quality: nil")
+        print("Bind: unknown")
+        print("Target: unknown")
+        return
+    end
+
+    local resolvedItemLink = itemLink or inputText
+    local bindType = isItemBOE(resolvedItemLink) and "BOE" or "BOP"
+    local targetName = getCollectorNameForItem(resolvedItemLink, quality)
+
+    print("Item:", resolvedItemLink)
+    print("Quality:", CONST.QUALITY_NAMES[quality] or tostring(quality))
+    print("Bind:", bindType)
+    print("Target:", targetName)
+end
+
+loaderFrame:RegisterEvent("ADDON_LOADED")
+loaderFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_LOADED" then
-        TML.EVENTS.HandleAddonLoaded(...)
+        handleAddonLoaded(...)
     end
 end)
 
-TML.EVENT_FRAME:RegisterEvent("LOOT_OPENED")
-TML.EVENT_FRAME:RegisterEvent("CHAT_MSG_LOOT")
-TML.EVENT_FRAME:RegisterEvent("PARTY_LOOT_METHOD_CHANGED")
-TML.EVENT_FRAME:RegisterEvent("GROUP_ROSTER_UPDATE")
-TML.EVENT_FRAME:RegisterEvent("PLAYER_ENTERING_WORLD")
-TML.EVENT_FRAME:SetScript("OnEvent", function(self, event, ...)
-    TML.EVENTS.HandleMainEvent(event, ...)
+eventFrame:RegisterEvent("LOOT_OPENED")
+eventFrame:RegisterEvent("CHAT_MSG_LOOT")
+eventFrame:RegisterEvent("PARTY_LOOT_METHOD_CHANGED")
+eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:SetScript("OnEvent", function(_, event, ...)
+    handleMainEvent(event, ...)
 end)
+
+addonTable = addonTable or {}
+addonTable.CreateMasterLooterTabContent = createMasterLooterTabContent
+addonTable.IsMasterLooterEnabled = isMasterLooterEnabled
